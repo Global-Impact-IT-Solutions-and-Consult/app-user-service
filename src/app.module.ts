@@ -1,6 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
@@ -10,6 +10,7 @@ import { UsersModule } from './users/users.module';
 import { CompaniesModule } from './companies/companies.module';
 import { ReceiptsModule } from './receipts/receipts.module';
 import { LoggingModule } from './logging/logging.module';
+import { CommonModule } from './common/common.module';
 
 @Module({
   imports: [
@@ -18,14 +19,20 @@ import { LoggingModule } from './logging/logging.module';
       isGlobal: true,
       envFilePath: ['.env.local', '.env'],
     }),
-    // MongoDB Connection
-    MongooseModule.forRootAsync({
+    // PostgreSQL Connection with TypeORM
+    TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        uri:
-          config.get<string>('MONGODB_URI') ||
-          'mongodb://localhost:27017/user-service',
+        type: 'postgres',
+        host: config.get<string>('DB_HOST') || 'localhost',
+        port: parseInt(config.get<string>('DB_PORT') || '5432'),
+        username: config.get<string>('DB_USERNAME') || 'postgres',
+        password: config.get<string>('DB_PASSWORD') || 'postgres',
+        database: config.get<string>('DB_DATABASE') || 'user-service',
+        entities: [__dirname + '/**/*.entity{.ts,.js}'],
+        synchronize: config.get<string>('NODE_ENV') !== 'production', // Auto-sync schema in dev
+        logging: config.get<string>('NODE_ENV') === 'development',
       }),
     }),
     // Rate Limiting
@@ -35,6 +42,8 @@ import { LoggingModule } from './logging/logging.module';
         limit: 100, // 100 requests per minute
       },
     ]),
+    // Common Module (Email Service)
+    CommonModule,
     // Feature Modules
     AuthModule,
     UsersModule,

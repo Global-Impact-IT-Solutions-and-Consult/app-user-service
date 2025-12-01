@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { Log, LogDocument } from './schemas/log.schema';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository, Like, Between } from 'typeorm';
+import { Log } from './entities/log.entity';
 import { QueryLogsDto } from './dto/query-logs.dto';
 
 export interface LogQueryParams {
@@ -21,7 +21,10 @@ export interface LogQueryParams {
 
 @Injectable()
 export class SearchService {
-  constructor(@InjectModel(Log.name) private logModel: Model<LogDocument>) {}
+  constructor(
+    @InjectRepository(Log)
+    private logRepository: Repository<Log>,
+  ) {}
 
   async queryLogs(params: LogQueryParams | QueryLogsDto) {
     const combinedParams = params as LogQueryParams & QueryLogsDto;
@@ -36,74 +39,79 @@ export class SearchService {
 
     const skip = (page - 1) * limit;
 
-    // Build MongoDB query
-    const query: any = {};
+    // Build TypeORM query builder
+    const queryBuilder = this.logRepository.createQueryBuilder('log');
 
     // Exact match filters
     if (filters.companyId) {
-      query.companyId = filters.companyId;
+      queryBuilder.andWhere('log.companyId = :companyId', {
+        companyId: filters.companyId,
+      });
     }
 
     if (filters.environment) {
-      query.environment = filters.environment;
+      queryBuilder.andWhere('log.environment = :environment', {
+        environment: filters.environment,
+      });
     }
 
     if (filters.receiptId) {
-      query.receiptId = filters.receiptId;
+      queryBuilder.andWhere('log.receiptId = :receiptId', {
+        receiptId: filters.receiptId,
+      });
     }
 
     if (filters.eventType) {
-      query.eventType = filters.eventType;
+      queryBuilder.andWhere('log.eventType = :eventType', {
+        eventType: filters.eventType,
+      });
     }
 
     if (filters.processingStage) {
-      query.processingStage = filters.processingStage;
+      queryBuilder.andWhere('log.processingStage = :processingStage', {
+        processingStage: filters.processingStage,
+      });
     }
 
     // Date range filter
     if (filters.dateFrom || filters.dateTo) {
-      query.timestamp = {};
-      if (filters.dateFrom) {
-        query.timestamp.$gte = new Date(filters.dateFrom);
-      }
-      if (filters.dateTo) {
-        query.timestamp.$lte = new Date(filters.dateTo);
-      }
+      const dateFrom = filters.dateFrom
+        ? new Date(filters.dateFrom)
+        : new Date(0);
+      const dateTo = filters.dateTo ? new Date(filters.dateTo) : new Date();
+      queryBuilder.andWhere('log.timestamp BETWEEN :dateFrom AND :dateTo', {
+        dateFrom,
+        dateTo,
+      });
     }
 
     // Text search across multiple fields
     if (search) {
-      query.$or = [
-        { eventType: { $regex: search, $options: 'i' } },
-        { processingStage: { $regex: search, $options: 'i' } },
-        { message: { $regex: search, $options: 'i' } },
-        { level: { $regex: search, $options: 'i' } },
-      ];
+      queryBuilder.andWhere(
+        '(log.eventType ILIKE :search OR log.processingStage ILIKE :search OR log.message ILIKE :search OR log.level ILIKE :search)',
+        { search: `%${search}%` },
+      );
     }
 
-    // Build sort object
-    const sort: any = {};
-    sort[sortBy] = sortOrder === 'asc' ? 1 : -1;
+    // Sorting
+    queryBuilder.orderBy(
+      `log.${sortBy}`,
+      sortOrder.toUpperCase() as 'ASC' | 'DESC',
+    );
+
+    // Pagination
+    queryBuilder.skip(skip).take(limit);
 
     try {
       // Execute query with pagination
-      const [logs, total] = await Promise.all([
-        this.logModel
-          .find(query)
-          .sort(sort)
-          .skip(skip)
-          .limit(limit)
-          .lean()
-          .exec(),
-        this.logModel.countDocuments(query).exec(),
-      ]);
+      const [logs, total] = await queryBuilder.getManyAndCount();
 
       return {
         logs: logs.map((log) => ({
-          id: log._id.toString(),
-          companyId: log.companyId?.toString(),
+          id: log.id,
+          companyId: log.companyId,
           environment: log.environment,
-          receiptId: log.receiptId?.toString(),
+          receiptId: log.receiptId,
           eventType: log.eventType,
           processingStage: log.processingStage,
           timestamp: log.timestamp,
@@ -135,14 +143,14 @@ export class SearchService {
     level?: string;
     metadata?: Record<string, any>;
     data?: Record<string, any>;
-  }): Promise<LogDocument> {
-    const log = new this.logModel({
+  }): Promise<Log> {
+    const log = this.logRepository.create({
       ...logData,
       companyId: logData.companyId,
       receiptId: logData.receiptId,
       timestamp: new Date(),
     });
 
-    return log.save();
+    return this.logRepository.save(log);
   }
 }

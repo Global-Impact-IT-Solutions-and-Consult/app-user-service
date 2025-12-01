@@ -2,29 +2,32 @@ import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { LocalStrategy } from './strategies/local.strategy';
-import { User, UserSchema } from '../users/schemas/user.schema';
-import { Company, CompanySchema } from '../companies/schemas/company.schema';
+import { GoogleStrategy } from './strategies/google.strategy';
+import { User } from '../users/entities/user.entity';
+import { Company } from '../companies/entities/company.entity';
 import { UsersModule } from '../users/users.module';
+import { CommonModule } from '../common/common.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: User.name, schema: UserSchema },
-      { name: Company.name, schema: CompanySchema },
-    ]),
+    TypeOrmModule.forFeature([User, Company]),
     PassportModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
-        secret: config.get<string>('JWT_SECRET') || 'your-secret-key-change-in-production',
-        signOptions: { expiresIn: config.get<string>('JWT_EXPIRES_IN') || '24h' },
+        secret:
+          config.get<string>('JWT_SECRET') ||
+          'your-secret-key-change-in-production',
+        signOptions: {
+          expiresIn: config.get<string>('JWT_EXPIRES_IN') || '24h',
+        },
       }),
     }),
     ThrottlerModule.forRoot([
@@ -34,10 +37,10 @@ import { UsersModule } from '../users/users.module';
       },
     ]),
     UsersModule,
+    CommonModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, LocalStrategy],
+  providers: [AuthService, JwtStrategy, LocalStrategy, GoogleStrategy],
   exports: [AuthService],
 })
 export class AuthModule {}
-

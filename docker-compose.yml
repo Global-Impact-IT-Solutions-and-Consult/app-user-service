@@ -6,28 +6,34 @@ services:
       - '3000:3000'
     environment:
       NODE_ENV: production
-      MONGODB_URI: mongodb://mongo:27017/user-service
+      DB_HOST: postgres
+      DB_PORT: 5433
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      DB_DATABASE: user-service
       JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
       ENCRYPTION_KEY: ${ENCRYPTION_KEY:-your-encryption-key-change-in-production}
       RECEIPT_SERVICE_URL: ${RECEIPT_SERVICE_URL:-http://localhost:3001}
     depends_on:
-      - mongo
+      - postgres
     restart: unless-stopped
 
-  mongo:
-    image: mongo:7
+  postgres:
+    image: postgres:16-alpine
     ports:
-      - '27017:27017'
+      - '5433:5432'
     volumes:
-      - mongo-data:/data/db
+      - postgres-data:/var/lib/postgresql/data
     environment:
-      MONGO_INITDB_DATABASE: user-service
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: user-service
     restart: unless-stopped
     healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
       interval: 10s
       timeout: 5s
       retries: 5
 
 volumes:
-  mongo-data:
+  postgres-data:

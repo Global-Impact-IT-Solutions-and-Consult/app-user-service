@@ -5,6 +5,7 @@ import {
   UseGuards,
   Get,
   Request,
+  Req,
   HttpCode,
   HttpStatus,
 } from '@nestjs/common';
@@ -23,9 +24,13 @@ import { LoginDto } from './dto/login.dto';
 import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { SignupDto } from './dto/signup.dto';
 import { SwitchEnvironmentDto } from './dto/switch-environment.dto';
+import { ResendOtpDto } from './dto/resend-otp.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
-import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
+import {
+  CurrentUser,
+  CurrentUserPayload,
+} from '../common/decorators/current-user.decorator';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -38,15 +43,28 @@ export class AuthController {
   @Public()
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
   @Post('signup')
-  @ApiOperation({ summary: 'User registration' })
-  @ApiResponse({ status: 201, description: 'User created successfully' })
+  @ApiOperation({ summary: 'User registration (sends OTP to email)' })
+  @ApiResponse({
+    status: 201,
+    description: 'User created successfully, OTP sent to email',
+    schema: {
+      example: {
+        message: 'User created successfully. OTP sent to your email.',
+        userId: '507f1f77bcf86cd799439011',
+        requiresMfa: true,
+        tempToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
   @ApiResponse({ status: 409, description: 'User already exists' })
   @ApiResponse({ status: 400, description: 'Validation error' })
   async signup(@Body() signupDto: SignupDto) {
     const user = await this.usersService.create(signupDto);
     return {
-      message: 'User created successfully. Please complete MFA setup.',
-      userId: user._id.toString(),
+      message: 'User created successfully. OTP sent to your email.',
+      userId: user.id,
+      requiresMfa: true,
+      tempToken: await this.authService.generateTempToken(user.id),
     };
   }
 
@@ -54,15 +72,14 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
   @Post('login')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'User login (triggers MFA)' })
+  @ApiOperation({ summary: 'User login (sends OTP to email for MFA)' })
   @ApiResponse({
     status: 200,
-    description: 'Login successful, MFA required',
+    description: 'Login successful, OTP sent to email',
     schema: {
       example: {
         requiresMfa: true,
-        mfaSecret: 'JBSWY3DPEHPK3PXP',
-        qrCodeUrl: 'data:image/png;base64,iVBORw0KGgoAAAANS...',
+        message: 'OTP sent to your email',
         tempToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
       },
     },
@@ -77,10 +94,10 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @Post('verify-mfa')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify MFA code' })
+  @ApiOperation({ summary: 'Verify email OTP code' })
   @ApiResponse({
     status: 200,
-    description: 'MFA verified, JWT token returned',
+    description: 'OTP verified, JWT token returned',
     schema: {
       example: {
         accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -93,9 +110,58 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Invalid MFA code' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired OTP code' })
   async verifyMfa(@Body() mfaVerifyDto: MfaVerifyDto) {
     return this.authService.verifyMfa(mfaVerifyDto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60000 } }) // 3 requests per minute
+  @Post('resend-otp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Resend OTP code to email' })
+  @ApiResponse({
+    status: 200,
+    description: 'OTP resent to email',
+    schema: {
+      example: {
+        message: 'OTP sent to your email',
+        tempToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'User not found' })
+  async resendOTP(@Body() resendOtpDto: ResendOtpDto) {
+    return this.authService.resendOTP(resendOtpDto.userId);
+  }
+
+  @Public()
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Initiate Google OAuth login' })
+  @ApiResponse({ status: 302, description: 'Redirects to Google OAuth' })
+  async googleAuth() {
+    // This endpoint initiates the Google OAuth flow
+    // Passport will handle the redirect
+  }
+
+  @Public()
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  @ApiOperation({ summary: 'Google OAuth callback (sends OTP to email)' })
+  @ApiResponse({
+    status: 200,
+    description: 'Google login successful, OTP sent to email',
+    schema: {
+      example: {
+        requiresMfa: true,
+        message: 'OTP sent to your email',
+        tempToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
+      },
+    },
+  })
+  async googleAuthRedirect(@Req() req) {
+    return this.authService.googleLogin(req.user);
   }
 
   @UseGuards(JwtAuthGuard)
@@ -155,12 +221,12 @@ export class AuthController {
     }
 
     return {
-      id: userDoc._id.toString(),
+      id: userDoc.id,
       email: userDoc.email,
       currentEnvironment: userDoc.currentEnvironment,
-      currentCompanyId: userDoc.currentCompanyId?.toString(),
-      companies: userDoc.companies?.map((c: any) => ({
-        id: c._id?.toString() || c.toString(),
+      currentCompanyId: userDoc.currentCompanyId,
+      companies: userDoc.companies?.map((c) => ({
+        id: c.id,
         name: c.name,
       })),
       roles: userDoc.roles,
@@ -169,4 +235,3 @@ export class AuthController {
     };
   }
 }
-

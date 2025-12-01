@@ -5,31 +5,39 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { authenticator } from 'otplib';
-import * as QRCode from 'qrcode';
-import { User, UserDocument, Environment } from '../users/schemas/user.schema';
-import { Company, CompanyDocument } from '../companies/schemas/company.schema';
+import { User, Environment } from '../users/entities/user.entity';
+import { Company } from '../companies/entities/company.entity';
 import { LoginDto } from './dto/login.dto';
 import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { SwitchEnvironmentDto } from './dto/switch-environment.dto';
 import { UsersService } from '../users/users.service';
 import { CurrentUserPayload } from '../common/decorators/current-user.decorator';
+import { EmailService } from '../common/services/email.service';
+import { OtpGeneratorUtil } from '../common/utils/otp-generator.util';
 
 @Injectable()
 export class AuthService {
   constructor(
-    @InjectModel(User.name) private userModel: Model<UserDocument>,
-    @InjectModel(Company.name) private companyModel: Model<CompanyDocument>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    @InjectRepository(Company)
+    private companyRepository: Repository<Company>,
     private jwtService: JwtService,
     private usersService: UsersService,
+    private emailService: EmailService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
     const user = await this.usersService.findByEmail(email);
     if (!user) {
+      return null;
+    }
+
+    // Validate password and hash exist
+    if (!password || !user.passwordHash) {
       return null;
     }
 
@@ -56,99 +64,116 @@ export class AuthService {
       );
     }
 
-    // Verify password
-    const isPasswordValid = await bcrypt.compare(
-      loginDto.password,
-      user.passwordHash,
-    );
+    // Validate password and hash exist
+    if (!loginDto.password) {
+      throw new UnauthorizedException('Password is required');
+    }
 
-    if (!isPasswordValid) {
-      await this.handleFailedLogin(user);
-      throw new UnauthorizedException('Invalid credentials');
+    if (!user.passwordHash && !user.isGoogleAuth) {
+      throw new UnauthorizedException(
+        'Account configuration error. Please contact support.',
+      );
+    }
+
+    // For Google auth users, skip password check
+    if (!user.isGoogleAuth) {
+      // Verify password
+      if (!user.passwordHash) {
+        throw new UnauthorizedException('Invalid credentials');
+      }
+      const isPasswordValid = await bcrypt.compare(
+        loginDto.password,
+        user.passwordHash,
+      );
+
+      if (!isPasswordValid) {
+        await this.handleFailedLogin(user);
+        throw new UnauthorizedException('Invalid credentials');
+      }
     }
 
     // Reset failed attempts on successful password check
-    await this.userModel.findByIdAndUpdate(user._id, {
-      $set: {
-        failedLoginAttempts: 0,
-        lockedUntil: null,
-      },
+    await this.userRepository.update(user.id, {
+      failedLoginAttempts: 0,
+      lockedUntil: null,
     });
 
-    // Mandatory MFA - always required
-    if (!user.mfaEnabled || !user.mfaSecret) {
-      // Generate MFA secret if not exists
-      const secret = authenticator.generateSecret();
-      const otpauthUrl = authenticator.keyuri(
-        user.email,
-        'User Service',
-        secret,
-      );
+    // Generate and send OTP via email (Mandatory MFA)
+    const otpCode = OtpGeneratorUtil.generateOTP();
+    const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10); // 10 minutes
 
-      await this.userModel.findByIdAndUpdate(user._id, {
-        $set: {
-          mfaSecret: secret,
-          mfaEnabled: true,
-        },
-      });
+    await this.userRepository.update(user.id, {
+      otpCode,
+      otpExpiresAt,
+      mfaEnabled: true,
+    });
 
-      // Generate QR code
-      const qrCodeUrl = await QRCode.toDataURL(otpauthUrl);
-
-      return {
-        requiresMfa: true,
-        mfaSecret: secret,
-        qrCodeUrl,
-        tempToken: await this.generateTempToken(user._id.toString()),
-      };
-    }
+    // Send OTP via email
+    await this.emailService.sendOTP(user.email, otpCode);
 
     return {
       requiresMfa: true,
-      tempToken: await this.generateTempToken(user._id.toString()),
+      message: 'OTP sent to your email',
+      tempToken: await this.generateTempToken(user.id),
     };
   }
 
   async verifyMfa(mfaVerifyDto: MfaVerifyDto) {
-    const user = await this.userModel
-      .findById(mfaVerifyDto.userId)
-      .populate('companies');
+    const user = await this.userRepository.findOne({
+      where: { id: mfaVerifyDto.userId },
+      relations: ['companies'],
+    });
 
-    if (!user || !user.mfaSecret) {
+    if (!user) {
       throw new UnauthorizedException('Invalid MFA session');
     }
 
-    const isValid = authenticator.verify({
-      token: mfaVerifyDto.code,
-      secret: user.mfaSecret,
-    });
-
-    if (!isValid) {
-      throw new UnauthorizedException('Invalid MFA code');
+    // Check if OTP exists and is not expired
+    if (!user.otpCode || !user.otpExpiresAt) {
+      throw new UnauthorizedException(
+        'No OTP found. Please request a new one.',
+      );
     }
+
+    if (OtpGeneratorUtil.isOTPExpired(user.otpExpiresAt)) {
+      throw new UnauthorizedException(
+        'OTP has expired. Please request a new one.',
+      );
+    }
+
+    // Verify OTP code
+    if (user.otpCode !== mfaVerifyDto.code) {
+      throw new UnauthorizedException('Invalid OTP code');
+    }
+
+    // Clear OTP after successful verification
+    await this.userRepository.update(user.id, {
+      otpCode: null,
+      otpExpiresAt: null,
+    });
 
     // Set default environment to TEST if not set
     let currentEnvironment = user.currentEnvironment || Environment.TEST;
 
     // Set default company if user has companies
-    let currentCompanyId: Types.ObjectId | undefined = user.currentCompanyId;
+    let currentCompanyId: string | undefined =
+      user.currentCompanyId || undefined;
     if (!currentCompanyId && user.companies && user.companies.length > 0) {
-      currentCompanyId = user.companies[0] as Types.ObjectId;
+      currentCompanyId = user.companies[0].id;
     }
 
     // Update user
-    await this.userModel.findByIdAndUpdate(user._id, {
-      $set: {
-        currentEnvironment,
-        currentCompanyId,
-        lastLoginAt: new Date(),
-      },
+    await this.userRepository.update(user.id, {
+      currentEnvironment,
+      currentCompanyId,
+      lastLoginAt: new Date(),
+      isEmailVerified: true, // Email is verified when OTP is used
     });
 
     // Generate JWT with environment scope
     const payload = await this.buildJwtPayload(
-      user._id.toString(),
-      currentCompanyId?.toString(),
+      user.id,
+      currentCompanyId,
       currentEnvironment,
       user.email,
       user.roles || [],
@@ -159,16 +184,91 @@ export class AuthService {
     return {
       accessToken,
       user: {
-        id: user._id.toString(),
+        id: user.id,
         email: user.email,
         currentEnvironment,
-        currentCompanyId: currentCompanyId?.toString(),
+        currentCompanyId,
       },
     };
   }
 
+  async resendOTP(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    // Generate new OTP
+    const otpCode = OtpGeneratorUtil.generateOTP();
+    const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10);
+
+    await this.userRepository.update(userId, {
+      otpCode,
+      otpExpiresAt,
+    });
+
+    // Send OTP via email
+    await this.emailService.sendOTP(user.email, otpCode);
+
+    return {
+      message: 'OTP sent to your email',
+      tempToken: await this.generateTempToken(userId),
+    };
+  }
+
+  async googleLogin(googleUser: any) {
+    const { googleId, email, firstName, lastName, picture } = googleUser;
+
+    // Find or create user
+    let user = await this.userRepository.findOne({
+      where: [{ email: email.toLowerCase() }, { googleId }],
+    });
+
+    if (!user) {
+      // Create new user with Google auth
+      user = this.userRepository.create({
+        email: email.toLowerCase(),
+        googleId,
+        isGoogleAuth: true,
+        mfaEnabled: false,
+        isEmailVerified: true, // Google emails are pre-verified
+        passwordHash: undefined, // No password for Google auth users
+      });
+      await this.userRepository.save(user);
+
+      // Send welcome email
+      await this.emailService.sendWelcomeEmail(email, firstName);
+    } else if (!user.googleId) {
+      // Link Google account to existing user
+      user.googleId = googleId;
+      user.isGoogleAuth = true;
+      await this.userRepository.save(user);
+    }
+
+    // Generate and send OTP for MFA (even for Google users)
+    const otpCode = OtpGeneratorUtil.generateOTP();
+    const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10);
+
+    await this.userRepository.update(user.id, {
+      otpCode,
+      otpExpiresAt,
+      mfaEnabled: true,
+    });
+
+    await this.emailService.sendOTP(user.email, otpCode);
+
+    return {
+      requiresMfa: true,
+      message: 'OTP sent to your email',
+      tempToken: await this.generateTempToken(user.id),
+    };
+  }
+
   async switchEnvironment(userId: string, switchDto: SwitchEnvironmentDto) {
-    const user = await this.userModel.findById(userId).populate('companies');
+    const user = await this.userRepository.findOne({
+      where: { id: userId },
+      relations: ['companies'],
+    });
 
     if (!user) {
       throw new UnauthorizedException('User not found');
@@ -177,28 +277,30 @@ export class AuthService {
     // Validate company access if provided
     if (switchDto.companyId) {
       const hasAccess = user.companies?.some(
-        (c) => c.toString() === switchDto.companyId,
+        (c) => c.id === switchDto.companyId,
       );
       if (!hasAccess) {
         throw new BadRequestException('Access denied to company');
       }
-      await this.userModel.findByIdAndUpdate(userId, {
-        $set: { currentCompanyId: switchDto.companyId },
+      await this.userRepository.update(userId, {
+        currentCompanyId: switchDto.companyId,
       });
     }
 
-    await this.userModel.findByIdAndUpdate(userId, {
-      $set: { currentEnvironment: switchDto.environment },
+    await this.userRepository.update(userId, {
+      currentEnvironment: switchDto.environment,
     });
 
     // Generate new JWT with updated environment
-    const updatedUser = await this.userModel.findById(userId);
+    const updatedUser = await this.userRepository.findOne({
+      where: { id: userId },
+    });
     if (!updatedUser) {
       throw new UnauthorizedException('User not found');
     }
 
     const companyId =
-      switchDto.companyId || updatedUser.currentCompanyId?.toString();
+      switchDto.companyId || updatedUser.currentCompanyId || undefined;
 
     const payload = await this.buildJwtPayload(
       userId,
@@ -236,14 +338,14 @@ export class AuthService {
     };
   }
 
-  private async generateTempToken(userId: string): Promise<string> {
+  async generateTempToken(userId: string): Promise<string> {
     return this.jwtService.sign(
       { userId, type: 'mfa-temp' },
-      { expiresIn: '5m' },
+      { expiresIn: '10m' }, // Increased to 10 minutes for OTP
     );
   }
 
-  private async handleFailedLogin(user: UserDocument) {
+  private async handleFailedLogin(user: User) {
     const failedAttempts = (user.failedLoginAttempts || 0) + 1;
     const updateData: any = {
       failedLoginAttempts: failedAttempts,
@@ -254,6 +356,6 @@ export class AuthService {
       updateData.lockedUntil = new Date(Date.now() + 30 * 60 * 1000);
     }
 
-    await this.userModel.findByIdAndUpdate(user._id, { $set: updateData });
+    await this.userRepository.update(user.id, updateData);
   }
 }

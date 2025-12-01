@@ -1,19 +1,29 @@
-import { Injectable, ConflictException, NotFoundException } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import {
+  Injectable,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { InjectRepository } from '@nestjs/typeorm';
+import { Repository } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { User, UserDocument } from './schemas/user.schema';
+import { User } from './entities/user.entity';
 import { SignupDto } from '../auth/dto/signup.dto';
+import { EmailService } from '../common/services/email.service';
+import { OtpGeneratorUtil } from '../common/utils/otp-generator.util';
 
 @Injectable()
 export class UsersService {
   constructor(
-    @InjectModel(User.name) private userModel: Model<UserDocument>,
+    @InjectRepository(User)
+    private userRepository: Repository<User>,
+    private emailService: EmailService,
   ) {}
 
-  async create(signupDto: SignupDto): Promise<UserDocument> {
+  async create(signupDto: SignupDto): Promise<User> {
     // Check if user exists
-    const existingUser = await this.userModel.findOne({ email: signupDto.email.toLowerCase() });
+    const existingUser = await this.userRepository.findOne({
+      where: { email: signupDto.email.toLowerCase() },
+    });
     if (existingUser) {
       throw new ConflictException('User with this email already exists');
     }
@@ -23,26 +33,47 @@ export class UsersService {
     const passwordHash = await bcrypt.hash(signupDto.password, saltRounds);
 
     // Create user
-    const user = new this.userModel({
+    const user = this.userRepository.create({
       email: signupDto.email.toLowerCase(),
       passwordHash,
       mfaEnabled: false,
       isEmailVerified: false,
     });
 
-    return user.save();
+    const savedUser = await this.userRepository.save(user);
+
+    // Generate and send OTP for email verification
+    const otpCode = OtpGeneratorUtil.generateOTP();
+    const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10);
+
+    await this.userRepository.update(savedUser.id, {
+      otpCode,
+      otpExpiresAt,
+    });
+
+    // Send OTP via email
+    await this.emailService.sendOTP(savedUser.email, otpCode);
+
+    return savedUser;
   }
 
-  async findById(id: string): Promise<UserDocument | null> {
-    return this.userModel.findById(id).populate('companies').exec();
+  async findById(id: string): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { id },
+      relations: ['companies'],
+    });
   }
 
-  async findByEmail(email: string): Promise<UserDocument | null> {
-    return this.userModel.findOne({ email: email.toLowerCase() }).populate('companies').exec();
+  async findByEmail(email: string): Promise<User | null> {
+    return this.userRepository.findOne({
+      where: { email: email.toLowerCase() },
+      relations: ['companies'],
+    });
   }
 
-  async update(userId: string, updates: Partial<User>): Promise<UserDocument> {
-    const user = await this.userModel.findByIdAndUpdate(userId, updates, { new: true });
+  async update(userId: string, updates: Partial<User>): Promise<User> {
+    await this.userRepository.update(userId, updates);
+    const user = await this.userRepository.findOne({ where: { id: userId } });
     if (!user) {
       throw new NotFoundException('User not found');
     }
@@ -50,9 +81,7 @@ export class UsersService {
   }
 
   async addCompanyToUser(userId: string, companyId: string): Promise<void> {
-    await this.userModel.findByIdAndUpdate(userId, {
-      $addToSet: { companies: companyId },
-    });
+    // This is now handled in the companies service when creating a company
+    // The relationship is managed through TypeORM's many-to-many relationship
   }
 }
-

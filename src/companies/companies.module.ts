@@ -1,19 +1,16 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { CompaniesController } from './companies.controller';
 import { CompaniesService } from './companies.service';
-import { Company, CompanySchema } from './schemas/company.schema';
-import { ApiKey, ApiKeySchema } from './schemas/api-key.schema';
-import { Webhook, WebhookSchema } from './schemas/webhook.schema';
+import { Company } from './entities/company.entity';
+import { ApiKey } from './entities/api-key.entity';
+import { Webhook } from './entities/webhook.entity';
+import { User } from '../users/entities/user.entity';
 import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([
-      { name: Company.name, schema: CompanySchema },
-      { name: ApiKey.name, schema: ApiKeySchema },
-      { name: Webhook.name, schema: WebhookSchema },
-    ]),
+    TypeOrmModule.forFeature([Company, ApiKey, Webhook, User]),
     UsersModule,
   ],
   controllers: [CompaniesController],
@@ -21,4 +18,3 @@ import { UsersModule } from '../users/users.module';
   exports: [CompaniesService],
 })
 export class CompaniesModule {}
-

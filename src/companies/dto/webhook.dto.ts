@@ -1,6 +1,6 @@
 import { IsUrl, IsEnum, IsArray, IsString, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { WebhookEnvironment } from '../schemas/webhook.schema';
+import { WebhookEnvironment } from '../entities/webhook.entity';
 
 export class CreateWebhookDto {
   @ApiProperty({
@@ -71,4 +71,3 @@ export class TestWebhookDto {
   @IsOptional()
   payload?: Record<string, any>;
 }
-

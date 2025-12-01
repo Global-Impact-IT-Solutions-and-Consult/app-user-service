@@ -1,12 +1,12 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
+import { TypeOrmModule } from '@nestjs/typeorm';
 import { LoggingController } from './logging.controller';
 import { LoggingService } from './logging.service';
 import { SearchService } from './search.service';
-import { Log, LogSchema } from './schemas/log.schema';
+import { Log } from './entities/log.entity';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Log.name, schema: LogSchema }])],
+  imports: [TypeOrmModule.forFeature([Log])],
   controllers: [LoggingController],
   providers: [LoggingService, SearchService],
   exports: [SearchService, LoggingService],

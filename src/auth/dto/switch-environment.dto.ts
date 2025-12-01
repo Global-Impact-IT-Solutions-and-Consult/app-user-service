@@ -1,6 +1,6 @@
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Environment } from '../../users/schemas/user.schema';
+import { Environment } from '../../users/entities/user.entity';
 
 export class SwitchEnvironmentDto {
   @ApiProperty({
@@ -19,4 +19,3 @@ export class SwitchEnvironmentDto {
   @IsString()
   companyId?: string;
 }
-
