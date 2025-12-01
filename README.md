@@ -23,26 +23,173 @@
 
 ## Description
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+User Service - A comprehensive authentication and business management service built with NestJS and MongoDB. This service handles user authentication with mandatory MFA, company onboarding, API key management, webhook management, receipt viewing, and ElasticSearch logging integration.
 
-## Project setup
+## Features
 
+- **User Authentication Flow**
+  - Email/password login with mandatory MFA (TOTP)
+  - JWT tokens with environment scope (Test/Live)
+  - Environment switching in dashboard
+  - Account lockout after failed attempts
+
+- **Business Onboarding Flow**
+  - User signup with MFA setup
+  - Company profile creation
+  - Onboarding steps tracking
+  - Automatic API key generation (Test immediately, Live after approval)
+  - Webhook management with signing secrets
+
+- **Receipt Viewing Flow**
+  - Query receipts by date range
+  - Download receipts in various formats
+  - View receipt status
+  - Access event logs from ElasticSearch
+
+- **Logging System**
+  - Direct ElasticSearch integration
+  - Paginated log results
+  - Filtering by event type, date range, receipt ID, processing stage, company ID, and environment
+
+## Technology Stack
+
+- **Framework**: NestJS 11
+- **Database**: MongoDB 7 with Mongoose
+- **Authentication**: JWT, Passport.js, TOTP (OTPLIB)
+- **Search**: ElasticSearch 8.11
+- **Validation**: class-validator, class-transformer
+- **Security**: bcrypt, encryption utilities, rate limiting
+
+## Project Setup
+
+### Prerequisites
+
+- Node.js 20+
+- MongoDB 7+
+- ElasticSearch 8.11+
+- Docker & Docker Compose (optional)
+
+### Installation
+
+1. **Clone the repository**
 ```bash
-$ yarn install
+git clone <repository-url>
+cd app-user-service
 ```
 
-## Compile and run the project
+2. **Install dependencies**
+```bash
+yarn install
+```
+
+3. **Setup environment variables**
+
+Copy `ENV.example` to `.env` and configure:
 
 ```bash
-# development
-$ yarn run start
-
-# watch mode
-$ yarn run start:dev
-
-# production mode
-$ yarn run start:prod
+cp ENV.example .env
 ```
+
+Edit `.env` with your configuration:
+- `JWT_SECRET`: Strong secret for JWT signing
+- `ENCRYPTION_KEY`: 32-character key for API/webhook secret encryption
+- `MONGODB_URI`: MongoDB connection string
+- `ELASTICSEARCH_NODE`: ElasticSearch node URL
+- `RECEIPT_SERVICE_URL`: Receipt service API URL
+
+4. **Start services with Docker Compose** (Recommended)
+
+```bash
+docker-compose up -d
+```
+
+This will start:
+- MongoDB on port 27017
+- ElasticSearch on port 9200
+- User Service on port 3000
+
+Or start services manually:
+
+```bash
+# Start MongoDB
+mongod
+
+# Start ElasticSearch
+elasticsearch
+
+# Start the application
+yarn start:dev
+```
+
+## Running the Application
+
+```bash
+# Development (with hot reload)
+yarn start:dev
+
+# Production build
+yarn build
+yarn start:prod
+
+# Debug mode
+yarn start:debug
+```
+
+The API will be available at `http://localhost:3000/api`
+
+### Swagger Documentation
+
+Once the application is running, you can access the interactive Swagger documentation at:
+
+```
+http://localhost:3000/api/docs
+```
+
+The Swagger UI provides:
+- Complete API endpoint documentation
+- Request/response schemas
+- Try-it-out functionality
+- Authentication support (JWT Bearer token)
+
+To use the API through Swagger:
+1. Navigate to `/api/docs`
+2. Use the "Authorize" button to enter your JWT token
+3. Test endpoints directly from the browser
+
+## API Endpoints
+
+### Authentication
+- `POST /api/auth/signup` - User registration
+- `POST /api/auth/login` - User login (triggers MFA)
+- `POST /api/auth/verify-mfa` - Verify MFA code
+- `POST /api/auth/switch-environment` - Switch between Test/Live environments
+- `GET /api/auth/me` - Get current user profile
+
+### Companies
+- `POST /api/companies` - Create company
+- `GET /api/companies` - Get user's companies
+- `GET /api/companies/:id` - Get company details
+- `PUT /api/companies/:id/onboarding/:step` - Update onboarding step
+- `GET /api/companies/:id/api-keys` - Get API keys
+- `DELETE /api/companies/:id/api-keys/:keyId` - Revoke API key
+
+### Webhooks
+- `POST /api/companies/:id/webhooks` - Create webhook
+- `GET /api/companies/:id/webhooks` - Get webhooks
+- `PUT /api/companies/:id/webhooks/:webhookId` - Update webhook
+- `DELETE /api/companies/:id/webhooks/:webhookId` - Delete webhook
+- `POST /api/companies/:id/webhooks/:webhookId/test` - Test webhook
+- `POST /api/companies/:id/webhooks/:webhookId/regenerate-secret` - Regenerate webhook secret
+
+### Receipts
+- `GET /api/receipts` - Query receipts (with date filters)
+- `GET /api/receipts/:id` - Get receipt details
+- `GET /api/receipts/:id/status` - Get receipt status
+- `GET /api/receipts/:id/download` - Download receipt
+- `GET /api/receipts/:id/logs` - Get receipt logs from ElasticSearch
+
+### Logs
+- `GET /api/logs` - Query logs with filters (company, environment, receipt, event type, date range)
 
 ## Run tests
 
