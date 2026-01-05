@@ -8,6 +8,8 @@ import {
   Param,
   UseGuards,
   Query,
+  NotFoundException,
+  ForbiddenException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -16,6 +18,7 @@ import {
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
+  ApiBody,
 } from '@nestjs/swagger';
 import { CompaniesService } from './companies.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
@@ -24,6 +27,7 @@ import {
   UpdateWebhookDto,
   TestWebhookDto,
 } from './dto/webhook.dto';
+import { UpdateOnboardingStepDto } from './dto/update-onboarding-step.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 
@@ -36,6 +40,7 @@ export class CompaniesController {
 
   @Post()
   @ApiOperation({ summary: 'Create a new company' })
+  @ApiBody({ type: CreateCompanyDto })
   @ApiResponse({ status: 201, description: 'Company created successfully' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async createCompany(
@@ -57,11 +62,26 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiResponse({ status: 200, description: 'Company details' })
   @ApiResponse({ status: 404, description: 'Company not found' })
-  async getCompany(@Param('id') id: string, @CurrentUser() user: CurrentUserPayload) {
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async getCompany(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
     const company = await this.companiesService.findById(id);
-    if (!company || !company.members.some((m: any) => m.toString() === user.userId)) {
-      throw new Error('Company not found or access denied');
+    if (!company) {
+      throw new NotFoundException(`Company with ID ${id} not found`);
     }
+
+    // Check if user is a member of the company
+    const isMember = company.members?.some(
+      (member) => member.id === user.userId,
+    );
+    if (!isMember) {
+      throw new ForbiddenException(
+        'You do not have access to this company',
+      );
+    }
+
     return company;
   }
 
@@ -69,18 +89,35 @@ export class CompaniesController {
   @ApiOperation({ summary: 'Update onboarding step status' })
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'step', description: 'Onboarding step name' })
+  @ApiBody({ type: UpdateOnboardingStepDto })
   @ApiResponse({ status: 200, description: 'Onboarding step updated' })
+  @ApiResponse({ status: 404, description: 'Company not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async updateOnboardingStep(
     @Param('id') companyId: string,
     @Param('step') step: string,
-    @Body() body: { completed: boolean },
+    @Body() body: UpdateOnboardingStepDto,
     @CurrentUser() user: CurrentUserPayload,
   ) {
     const company = await this.companiesService.findById(companyId);
-    if (!company || !company.members.some((m: any) => m.toString() === user.userId)) {
-      throw new Error('Access denied');
+    if (!company) {
+      throw new NotFoundException(`Company with ID ${companyId} not found`);
     }
-    return this.companiesService.updateOnboardingStep(companyId, step, body.completed);
+
+    const isMember = company.members?.some(
+      (member) => member.id === user.userId,
+    );
+    if (!isMember) {
+      throw new ForbiddenException(
+        'You do not have access to this company',
+      );
+    }
+
+    return this.companiesService.updateOnboardingStep(
+      companyId,
+      step,
+      body.completed,
+    );
   }
 
   // API Key Management
@@ -88,7 +125,11 @@ export class CompaniesController {
   @ApiOperation({ summary: 'Get all API keys for a company' })
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiResponse({ status: 200, description: 'List of API keys' })
-  async getApiKeys(@Param('id') companyId: string, @CurrentUser() user: CurrentUserPayload) {
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async getApiKeys(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
     return this.companiesService.getApiKeys(companyId, user.userId);
   }
 
@@ -97,6 +138,8 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'keyId', description: 'API Key ID' })
   @ApiResponse({ status: 200, description: 'API key revoked successfully' })
+  @ApiResponse({ status: 404, description: 'API key not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async revokeApiKey(
     @Param('id') companyId: string,
     @Param('keyId') keyId: string,
@@ -110,40 +153,63 @@ export class CompaniesController {
   @Post(':id/webhooks')
   @ApiOperation({ summary: 'Create a new webhook' })
   @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiBody({ type: CreateWebhookDto })
   @ApiResponse({ status: 201, description: 'Webhook created successfully' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async createWebhook(
     @Param('id') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
     @Body() createWebhookDto: CreateWebhookDto,
   ) {
-    return this.companiesService.createWebhook(companyId, user.userId, createWebhookDto);
+    return this.companiesService.createWebhook(
+      companyId,
+      user.userId,
+      createWebhookDto,
+    );
   }
 
   @Get(':id/webhooks')
   @ApiOperation({ summary: 'Get all webhooks for a company' })
   @ApiParam({ name: 'id', description: 'Company ID' })
-  @ApiQuery({ name: 'environment', required: false, description: 'Filter by environment (test/live)' })
+  @ApiQuery({
+    name: 'environment',
+    required: false,
+    description: 'Filter by environment (test/live)',
+  })
   @ApiResponse({ status: 200, description: 'List of webhooks' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async getWebhooks(
     @Param('id') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
     @Query('environment') environment?: string,
   ) {
-    return this.companiesService.getWebhooks(companyId, user.userId, environment);
+    return this.companiesService.getWebhooks(
+      companyId,
+      user.userId,
+      environment,
+    );
   }
 
   @Put(':id/webhooks/:webhookId')
   @ApiOperation({ summary: 'Update a webhook' })
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'webhookId', description: 'Webhook ID' })
+  @ApiBody({ type: UpdateWebhookDto })
   @ApiResponse({ status: 200, description: 'Webhook updated successfully' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async updateWebhook(
     @Param('id') companyId: string,
     @Param('webhookId') webhookId: string,
     @CurrentUser() user: CurrentUserPayload,
     @Body() updateWebhookDto: UpdateWebhookDto,
   ) {
-    return this.companiesService.updateWebhook(webhookId, companyId, user.userId, updateWebhookDto);
+    return this.companiesService.updateWebhook(
+      webhookId,
+      companyId,
+      user.userId,
+      updateWebhookDto,
+    );
   }
 
   @Delete(':id/webhooks/:webhookId')
@@ -151,12 +217,18 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'webhookId', description: 'Webhook ID' })
   @ApiResponse({ status: 200, description: 'Webhook deleted successfully' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async deleteWebhook(
     @Param('id') companyId: string,
     @Param('webhookId') webhookId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.companiesService.deleteWebhook(webhookId, companyId, user.userId);
+    await this.companiesService.deleteWebhook(
+      webhookId,
+      companyId,
+      user.userId,
+    );
     return { message: 'Webhook deleted successfully' };
   }
 
@@ -164,14 +236,23 @@ export class CompaniesController {
   @ApiOperation({ summary: 'Test a webhook by sending a test event' })
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'webhookId', description: 'Webhook ID' })
+  @ApiBody({ type: TestWebhookDto })
   @ApiResponse({ status: 200, description: 'Webhook test result' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  @ApiResponse({ status: 400, description: 'Webhook is not active' })
   async testWebhook(
     @Param('id') companyId: string,
     @Param('webhookId') webhookId: string,
     @CurrentUser() user: CurrentUserPayload,
     @Body() testDto: TestWebhookDto,
   ) {
-    return this.companiesService.testWebhook(webhookId, companyId, user.userId, testDto);
+    return this.companiesService.testWebhook(
+      webhookId,
+      companyId,
+      user.userId,
+      testDto,
+    );
   }
 
   @Post(':id/webhooks/:webhookId/regenerate-secret')
@@ -179,12 +260,18 @@ export class CompaniesController {
   @ApiParam({ name: 'id', description: 'Company ID' })
   @ApiParam({ name: 'webhookId', description: 'Webhook ID' })
   @ApiResponse({ status: 200, description: 'Webhook secret regenerated' })
+  @ApiResponse({ status: 404, description: 'Webhook not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
   async regenerateWebhookSecret(
     @Param('id') companyId: string,
     @Param('webhookId') webhookId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    const secret = await this.companiesService.regenerateWebhookSecret(webhookId, companyId, user.userId);
+    const secret = await this.companiesService.regenerateWebhookSecret(
+      webhookId,
+      companyId,
+      user.userId,
+    );
     return {
       message: 'Webhook secret regenerated. Please save it securely.',
       signingSecret: secret,

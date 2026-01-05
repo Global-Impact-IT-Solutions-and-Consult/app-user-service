@@ -25,9 +25,10 @@ export class ApiKey {
   @Column()
   companyId: string;
 
-  @ManyToOne(() => Company, (company) => company.apiKeys)
-  @JoinColumn({ name: 'companyId' })
-  company: Company;
+  // DEPRECATED: This entity is no longer used. API keys are now in Settings entity.
+  // @ManyToOne(() => Company, (company) => company.apiKeys)
+  // @JoinColumn({ name: 'companyId' })
+  // company: Company;
 
   @Column({
     type: 'enum',

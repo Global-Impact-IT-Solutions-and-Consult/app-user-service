@@ -3,15 +3,17 @@ import {
   NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Logger,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository, In } from 'typeorm';
+import { Repository, In, QueryRunner } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { Company, CompanyStatus } from './entities/company.entity';
-import { ApiKey, ApiKeyEnvironment } from './entities/api-key.entity';
-import { Webhook, WebhookEnvironment } from './entities/webhook.entity';
 import { User } from '../users/entities/user.entity';
+import { Webhook } from './entities/webhook.entity';
+import { CompanySettingsService } from '../company-settings/company-settings.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
 import {
   CreateWebhookDto,
@@ -19,50 +21,121 @@ import {
   TestWebhookDto,
 } from './dto/webhook.dto';
 import { EncryptionUtil } from '../common/utils/encryption.util';
-import { ApiKeyGeneratorUtil } from '../common/utils/api-key-generator.util';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
+import { SettingsType } from './entities/settings.entity';
 
 @Injectable()
 export class CompaniesService {
+  private readonly logger = new Logger(CompaniesService.name);
+
   constructor(
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
-    @InjectRepository(ApiKey)
-    private apiKeyRepository: Repository<ApiKey>,
-    @InjectRepository(Webhook)
-    private webhookRepository: Repository<Webhook>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
     private usersService: UsersService,
+    private companySettingsService: CompanySettingsService,
   ) {}
 
   async create(
     userId: string,
     createCompanyDto: CreateCompanyDto,
   ): Promise<Company> {
-    const user = await this.userRepository.findOne({ where: { id: userId } });
-    if (!user) {
-      throw new NotFoundException('User not found');
+    const queryRunner = this.companyRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+
+    try {
+      const user = await queryRunner.manager.findOne(User, {
+        where: { id: userId },
+      });
+      if (!user) {
+        throw new NotFoundException('User not found');
+      }
+
+      // Create company without members first to ensure it gets an ID
+      const company = queryRunner.manager.create(Company, {
+        ...createCompanyDto,
+        status: CompanyStatus.PENDING,
+        onboardingSteps: {},
+      });
+
+      // Save company to get the generated ID
+      const savedCompany = await queryRunner.manager.save(Company, company);
+
+      // Verify the company was saved and has an ID
+      if (!savedCompany.id) {
+        throw new InternalServerErrorException(
+          'Company was created but did not receive an ID',
+        );
+      }
+
+      this.logger.debug(
+        `Company created with ID: ${savedCompany.id}, User ID: ${user.id}`,
+      );
+
+      // Use TypeORM's relation manager to add the user to the company
+      // This ensures the relationship is created properly within the transaction
+      await queryRunner.manager
+        .createQueryBuilder()
+        .relation(Company, 'members')
+        .of(savedCompany.id)
+        .add(user.id);
+
+      // Commit transaction first
+      await queryRunner.commitTransaction();
+
+      // Create CompanySettings with TEST and LIVE settings (outside transaction)
+      await this.companySettingsService.createCompanySettings(savedCompany.id);
+
+      // Reload company with relations for return
+      const companyWithRelations = await this.companyRepository.findOne({
+        where: { id: savedCompany.id },
+        relations: ['members', 'companySettings', 'companySettings.settings'],
+      });
+
+      return companyWithRelations || savedCompany;
+    } catch (error: any) {
+      // Rollback transaction on error
+      await queryRunner.rollbackTransaction();
+      
+      this.logger.error(
+        `Failed to create company for user ${userId}: ${error.message}`,
+        error.stack,
+      );
+
+      // Re-throw known exceptions
+      if (
+        error instanceof NotFoundException ||
+        error instanceof BadRequestException ||
+        error instanceof ForbiddenException
+      ) {
+        throw error;
+      }
+
+      // Handle foreign key constraint violations
+      if (error.code === '23503') {
+        throw new BadRequestException(
+          `Database constraint violation: ${error.detail || error.message}`,
+        );
+      }
+
+      // Handle other database errors
+      if (error.code && error.code.startsWith('23')) {
+        throw new BadRequestException(
+          `Database error: ${error.detail || error.message}`,
+        );
+      }
+
+      // Generic error
+      throw new InternalServerErrorException(
+        `Failed to create company: ${error.message || 'Unknown error'}`,
+      );
+    } finally {
+      // Release query runner
+      await queryRunner.release();
     }
-
-    const company = this.companyRepository.create({
-      ...createCompanyDto,
-      members: [user],
-      status: CompanyStatus.PENDING,
-      onboardingSteps: {},
-    });
-
-    const savedCompany = await this.companyRepository.save(company);
-
-    // Add company to user's companies list
-    user.companies = [...(user.companies || []), savedCompany];
-    await this.userRepository.save(user);
-
-    // Generate TEST API keys immediately
-    await this.generateApiKeys(savedCompany.id, ApiKeyEnvironment.TEST);
-
-    return savedCompany;
   }
 
   async findById(companyId: string): Promise<Company | null> {
@@ -114,130 +187,82 @@ export class CompaniesService {
     company.approvedAt = new Date();
     company.approvedBy = approvedBy;
 
-    // Generate LIVE API keys after approval
-    await this.generateApiKeys(companyId, ApiKeyEnvironment.LIVE);
+    // Activate LIVE settings after approval (API keys already generated)
+    const companySettings = await this.companySettingsService.getCompanySettings(
+      companyId,
+      approvedBy,
+    );
+    const liveSettings = companySettings.settings.find(
+      (s) => s.type === SettingsType.LIVE,
+    );
+    if (liveSettings && !liveSettings.publicKey) {
+      // Generate LIVE API keys if not already generated
+      await this.companySettingsService.regenerateApiKeys(
+        companyId,
+        approvedBy,
+        SettingsType.LIVE,
+      );
+    }
 
     return this.companyRepository.save(company);
   }
 
-  async generateApiKeys(
-    companyId: string,
-    environment: ApiKeyEnvironment,
-  ): Promise<void> {
-    // Check if keys already exist
-    const existing = await this.apiKeyRepository.findOne({
-      where: {
-        companyId,
-        environment,
-        isActive: true,
-      },
-    });
-
-    if (existing) {
-      return; // Keys already exist
-    }
-
-    const publicKey = ApiKeyGeneratorUtil.generatePublicKey(environment);
-    const secretKey = ApiKeyGeneratorUtil.generateSecretKey(environment);
-
-    // Encrypt and hash secret key
-    const encryptedSecret = EncryptionUtil.encrypt(secretKey);
-    const secretHash = await bcrypt.hash(secretKey, 12);
-
-    await this.apiKeyRepository.save({
-      companyId,
-      environment,
-      publicKey,
-      secretKeyHash: secretHash,
-      isActive: true,
-    });
-  }
 
   async getApiKeys(companyId: string, userId: string): Promise<any[]> {
-    // Verify user has access
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
+    const companySettings = await this.companySettingsService.getCompanySettings(
+      companyId,
+      userId,
+    );
 
-    const keys = await this.apiKeyRepository.find({
-      where: { companyId },
-    });
-
-    return keys.map((key) => ({
-      id: key.id,
-      environment: key.environment,
-      publicKey: key.publicKey,
-      isActive: key.isActive,
-      lastUsedAt: key.lastUsedAt,
-      createdAt: key.createdAt,
+    return companySettings.settings.map((settings) => ({
+      id: settings.id,
+      type: settings.type,
+      publicKey: settings.publicKey,
+      isActive: settings.isActive,
+      lastUsedAt: settings.lastUsedAt,
+      createdAt: settings.createdAt,
     }));
   }
 
   async revokeApiKey(
-    apiKeyId: string,
+    settingsId: string,
     companyId: string,
     userId: string,
   ): Promise<void> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
+    // Use CompanySettingsService to revoke
+    const companySettings = await this.companySettingsService.getCompanySettings(
+      companyId,
+      userId,
+    );
+    const settings = companySettings.settings.find((s) => s.id === settingsId);
+    if (!settings) {
+      throw new NotFoundException('Settings not found');
     }
 
-    const apiKey = await this.apiKeyRepository.findOne({
-      where: { id: apiKeyId, companyId },
-    });
-    if (!apiKey) {
-      throw new NotFoundException('API key not found');
-    }
-
-    apiKey.isActive = false;
-    apiKey.revokedAt = new Date();
-    apiKey.revokedBy = userId;
-    await this.apiKeyRepository.save(apiKey);
+    await this.companySettingsService.revokeApiKeys(
+      companyId,
+      userId,
+      settings.type,
+    );
   }
 
-  // Webhook Management
+  // Webhook Management - Delegated to CompanySettingsService
   async createWebhook(
     companyId: string,
     userId: string,
     createWebhookDto: CreateWebhookDto,
   ): Promise<any> {
-    // Verify user has access
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    // Generate webhook secret
-    const signingSecret = ApiKeyGeneratorUtil.generateWebhookSecret();
-    // Encrypt the secret so we can decrypt and use it for signing later
-    const signingSecretEncrypted = EncryptionUtil.encrypt(signingSecret);
-
-    const webhook = this.webhookRepository.create({
+    const result = await this.companySettingsService.createWebhook(
       companyId,
-      environment: createWebhookDto.environment,
-      url: createWebhookDto.url,
-      signingSecretHash: signingSecretEncrypted,
-      events: createWebhookDto.events || [],
-      isActive: true,
-    });
+      userId,
+      createWebhookDto.environment,
+      createWebhookDto.url,
+      createWebhookDto.events || [],
+    );
 
-    const savedWebhook = await this.webhookRepository.save(webhook);
-
-    // Return webhook with signing secret (only shown once)
     return {
-      ...savedWebhook,
-      signingSecret, // Only returned on creation
+      ...result.webhook,
+      signingSecret: result.signingSecret,
     };
   }
 
@@ -246,20 +271,14 @@ export class CompaniesService {
     userId: string,
     environment?: string,
   ): Promise<Webhook[]> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    const where: any = { companyId };
-    if (environment) {
-      where.environment = environment;
-    }
-
-    return this.webhookRepository.find({ where });
+    const settingsType = environment
+      ? (environment === 'test' ? SettingsType.TEST : SettingsType.LIVE)
+      : undefined;
+    return this.companySettingsService.getWebhooks(
+      companyId,
+      userId,
+      settingsType,
+    );
   }
 
   async updateWebhook(
@@ -268,31 +287,14 @@ export class CompaniesService {
     userId: string,
     updateWebhookDto: UpdateWebhookDto,
   ): Promise<Webhook> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    const webhook = await this.webhookRepository.findOne({
-      where: {
-        id: webhookId,
-        companyId,
-      },
-    });
-    if (!webhook) {
-      throw new NotFoundException('Webhook not found');
-    }
-
-    if (updateWebhookDto.url !== undefined) webhook.url = updateWebhookDto.url;
-    if (updateWebhookDto.events !== undefined)
-      webhook.events = updateWebhookDto.events;
-    if (updateWebhookDto.isActive !== undefined)
-      webhook.isActive = updateWebhookDto.isActive;
-
-    return this.webhookRepository.save(webhook);
+    return this.companySettingsService.updateWebhook(
+      webhookId,
+      companyId,
+      userId,
+      updateWebhookDto.url,
+      updateWebhookDto.events,
+      updateWebhookDto.isActive,
+    );
   }
 
   async deleteWebhook(
@@ -300,15 +302,11 @@ export class CompaniesService {
     companyId: string,
     userId: string,
   ): Promise<void> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    await this.webhookRepository.delete({ id: webhookId, companyId });
+    return this.companySettingsService.deleteWebhook(
+      webhookId,
+      companyId,
+      userId,
+    );
   }
 
   async testWebhook(
@@ -317,23 +315,11 @@ export class CompaniesService {
     userId: string,
     testDto: TestWebhookDto,
   ): Promise<any> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    const webhook = await this.webhookRepository.findOne({
-      where: {
-        id: webhookId,
-        companyId,
-      },
-    });
-    if (!webhook) {
-      throw new NotFoundException('Webhook not found');
-    }
+    const webhook = await this.companySettingsService.getWebhookById(
+      webhookId,
+      companyId,
+      userId,
+    );
 
     if (!webhook.isActive) {
       throw new BadRequestException('Webhook is not active');
@@ -367,9 +353,7 @@ export class CompaniesService {
       });
 
       // Update webhook stats
-      webhook.lastTriggeredAt = new Date();
-      webhook.successCount = (webhook.successCount || 0) + 1;
-      await this.webhookRepository.save(webhook);
+      await this.companySettingsService.updateWebhookStats(webhookId, true);
 
       return {
         success: true,
@@ -378,8 +362,7 @@ export class CompaniesService {
       };
     } catch (error: any) {
       // Update failure stats
-      webhook.failureCount = (webhook.failureCount || 0) + 1;
-      await this.webhookRepository.save(webhook);
+      await this.companySettingsService.updateWebhookStats(webhookId, false);
 
       return {
         success: false,
@@ -394,30 +377,10 @@ export class CompaniesService {
     companyId: string,
     userId: string,
   ): Promise<string> {
-    const company = await this.companyRepository.findOne({
-      where: { id: companyId },
-      relations: ['members'],
-    });
-    if (!company || !company.members.some((m) => m.id === userId)) {
-      throw new ForbiddenException('Access denied');
-    }
-
-    const webhook = await this.webhookRepository.findOne({
-      where: {
-        id: webhookId,
-        companyId,
-      },
-    });
-    if (!webhook) {
-      throw new NotFoundException('Webhook not found');
-    }
-
-    const newSecret = ApiKeyGeneratorUtil.generateWebhookSecret();
-    const signingSecretEncrypted = EncryptionUtil.encrypt(newSecret);
-
-    webhook.signingSecretHash = signingSecretEncrypted;
-    await this.webhookRepository.save(webhook);
-
-    return newSecret; // Return once for user to save
+    return this.companySettingsService.regenerateWebhookSecret(
+      webhookId,
+      companyId,
+      userId,
+    );
   }
 }

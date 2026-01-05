@@ -10,8 +10,7 @@ import {
   JoinTable,
 } from 'typeorm';
 import { User } from '../../users/entities/user.entity';
-import { ApiKey } from './api-key.entity';
-import { Webhook } from './webhook.entity';
+import { CompanySettings } from './company-settings.entity';
 
 export enum CompanyStatus {
   PENDING = 'pending',
@@ -21,7 +20,6 @@ export enum CompanyStatus {
 }
 
 @Entity('companies')
-@Index(['status'])
 export class Company {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -38,6 +36,7 @@ export class Company {
   @Column('jsonb', { nullable: true })
   documents: Record<string, string>;
 
+  @Index()
   @Column({
     type: 'enum',
     enum: CompanyStatus,
@@ -59,11 +58,11 @@ export class Company {
   })
   members: User[];
 
-  @OneToMany(() => ApiKey, (apiKey) => apiKey.company)
-  apiKeys: ApiKey[];
-
-  @OneToMany(() => Webhook, (webhook) => webhook.company)
-  webhooks: Webhook[];
+  @OneToMany(
+    () => CompanySettings,
+    (companySettings) => companySettings.company,
+  )
+  companySettings: CompanySettings[];
 
   @Column({ default: true })
   isActive: boolean;

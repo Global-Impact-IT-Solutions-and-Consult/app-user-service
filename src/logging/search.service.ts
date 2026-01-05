@@ -129,7 +129,16 @@ export class SearchService {
       };
     } catch (error: any) {
       console.error('Search query failed:', error.message);
-      throw new Error(`Search query failed: ${error.message}`);
+      // Re-throw as-is if it's already an HttpException
+      if (error.status || error.getStatus) {
+        throw error;
+      }
+      // Otherwise wrap in a generic error with more context
+      const searchError = new Error(
+        `Search query failed: ${error.message || 'Unknown error'}`,
+      );
+      (searchError as any).originalError = error;
+      throw searchError;
     }
   }
 

@@ -3,38 +3,31 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToOne,
+  OneToMany,
   JoinColumn,
   CreateDateColumn,
   UpdateDateColumn,
   Index,
 } from 'typeorm';
-import { Company } from './company.entity';
-
-export enum WebhookEnvironment {
-  TEST = 'test',
-  LIVE = 'live',
-}
+import { Settings } from './settings.entity';
+import { WebhookEvent } from './webhook-event.entity';
 
 @Entity('webhooks')
-@Index(['companyId', 'environment'])
-@Index(['companyId', 'isActive'])
-@Index(['url'])
 export class Webhook {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index()
+  @Column()
+  settingsId: string;
+
+  @ManyToOne(() => Settings, (settings) => settings.webhooks)
+  @JoinColumn({ name: 'settingsId' })
+  settings: Settings;
+
+  @Index()
   @Column()
   companyId: string;
-
-  @ManyToOne(() => Company, (company) => company.webhooks)
-  @JoinColumn({ name: 'companyId' })
-  company: Company;
-
-  @Column({
-    type: 'enum',
-    enum: WebhookEnvironment,
-  })
-  environment: WebhookEnvironment;
 
   @Column()
   url: string;
@@ -43,7 +36,7 @@ export class Webhook {
   signingSecretHash: string;
 
   @Column({ type: 'text', array: true, default: '{}' })
-  events: string[];
+  subscribedEvents: string[];
 
   @Column({ default: true })
   isActive: boolean;
@@ -59,6 +52,9 @@ export class Webhook {
 
   @Column('jsonb', { nullable: true })
   metadata: Record<string, string>;
+
+  @OneToMany(() => WebhookEvent, (event) => event.webhook)
+  events: WebhookEvent[];
 
   @CreateDateColumn()
   createdAt: Date;

@@ -18,12 +18,11 @@ export enum Environment {
 }
 
 @Entity('users')
-@Index(['email'])
-@Index(['currentCompanyId'])
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
+  @Index()
   @Column({ unique: true, length: 255 })
   email: string;
 
@@ -58,6 +57,7 @@ export class User {
   })
   currentEnvironment: Environment;
 
+  @Index()
   @Column({ type: 'uuid', nullable: true })
   currentCompanyId: string | null;
 
@@ -72,11 +72,6 @@ export class User {
   permissions: string[];
 
   @ManyToMany(() => Company, (company) => company.members)
-  @JoinTable({
-    name: 'user_companies',
-    joinColumn: { name: 'userId', referencedColumnName: 'id' },
-    inverseJoinColumn: { name: 'companyId', referencedColumnName: 'id' },
-  })
   companies: Company[];
 
   @Column({ type: 'timestamp', nullable: true })

@@ -1,6 +1,6 @@
 import { IsUrl, IsEnum, IsArray, IsString, IsOptional } from 'class-validator';
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { WebhookEnvironment } from '../entities/webhook.entity';
+import { SettingsType } from '../entities/settings.entity';
 
 export class CreateWebhookDto {
   @ApiProperty({
@@ -11,12 +11,12 @@ export class CreateWebhookDto {
   url: string;
 
   @ApiProperty({
-    description: 'Webhook environment',
-    enum: WebhookEnvironment,
-    example: WebhookEnvironment.TEST,
+    description: 'Settings type (test or live)',
+    enum: SettingsType,
+    example: SettingsType.TEST,
   })
-  @IsEnum(WebhookEnvironment)
-  environment: WebhookEnvironment;
+  @IsEnum(SettingsType)
+  environment: SettingsType;
 
   @ApiPropertyOptional({
     description: 'Event types to subscribe to',

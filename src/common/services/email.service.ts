@@ -4,35 +4,31 @@ import * as nodemailer from 'nodemailer';
 
 @Injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter;
+  private transporter: nodemailer.Transporter | null = null;
+  private isConfigured: boolean = false;
 
   constructor(private configService: ConfigService) {
-    // Create transporter based on environment
-    const emailConfig = {
-      host: this.configService.get<string>('SMTP_HOST') || 'smtp.gmail.com',
-      port: parseInt(this.configService.get<string>('SMTP_PORT') || '587'),
-      secure: this.configService.get<string>('SMTP_SECURE') === 'true', // true for 465, false for other ports
-      auth: {
-        user: this.configService.get<string>('SMTP_USER'),
-        pass: this.configService.get<string>('SMTP_PASS'),
-      },
-    };
+    const smtpUser = this.configService.get<string>('SMTP_USER');
+    const smtpPass = this.configService.get<string>('SMTP_PASS');
 
-    // If no SMTP config, use test account (for development)
-    if (!emailConfig.auth.user || !emailConfig.auth.pass) {
-      console.warn('SMTP not configured. Email sending will be disabled.');
-      // Create a test transporter (won't actually send emails)
-      this.transporter = nodemailer.createTransport({
-        host: 'smtp.ethereal.email',
-        port: 587,
-        secure: false,
+    if (smtpUser && smtpPass) {
+      // Create transporter with actual SMTP config
+      const emailConfig = {
+        host: this.configService.get<string>('SMTP_HOST') || 'smtp.gmail.com',
+        port: parseInt(this.configService.get<string>('SMTP_PORT') || '587'),
+        secure: this.configService.get<string>('SMTP_SECURE') === 'true',
         auth: {
-          user: 'test@example.com',
-          pass: 'test',
+          user: smtpUser,
+          pass: smtpPass,
         },
-      });
-    } else {
+      };
       this.transporter = nodemailer.createTransport(emailConfig);
+      this.isConfigured = true;
+    } else {
+      console.log(
+        '[DEV MODE] SMTP not configured. OTPs will be logged to console instead of sent via email.',
+      );
+      this.isConfigured = false;
     }
   }
 
@@ -57,20 +53,31 @@ export class EmailService {
       text: `Your OTP code is: ${otpCode}. This code will expire in 10 minutes.`,
     };
 
-    try {
-      if (
-        this.configService.get<string>('SMTP_USER') &&
-        this.configService.get<string>('SMTP_PASS')
-      ) {
+    if (this.isConfigured && this.transporter) {
+      try {
         await this.transporter.sendMail(mailOptions);
-        console.log(`OTP sent to ${email}`);
-      } else {
-        console.log(`[DEV MODE] OTP for ${email}: ${otpCode}`);
-        console.log('Configure SMTP settings to actually send emails.');
+        console.log(`✓ OTP sent to ${email}`);
+      } catch (error: any) {
+        // If email fails in production, log the OTP as fallback
+        console.error('Failed to send email:', error.message);
+        console.log(`\n========================================`);
+        console.log(`[FALLBACK] OTP for ${email}: ${otpCode}`);
+        console.log(`This OTP will expire in 10 minutes.`);
+        console.log(`========================================\n`);
+        // In production, you might want to throw here
+        if (this.configService.get<string>('NODE_ENV') === 'production') {
+          throw new Error(
+            `Failed to send OTP email to ${email}: ${error.message}`,
+          );
+        }
       }
-    } catch (error) {
-      console.error('Failed to send email:', error);
-      throw new Error('Failed to send OTP email');
+    } else {
+      // Development mode - just log the OTP
+      console.log(`\n========================================`);
+      console.log(`[DEV MODE] OTP for ${email}: ${otpCode}`);
+      console.log(`This OTP will expire in 10 minutes.`);
+      console.log(`Configure SMTP settings in .env to actually send emails.`);
+      console.log(`========================================\n`);
     }
   }
 
@@ -90,18 +97,22 @@ export class EmailService {
       `,
     };
 
-    try {
-      if (
-        this.configService.get<string>('SMTP_USER') &&
-        this.configService.get<string>('SMTP_PASS')
-      ) {
+    if (this.isConfigured && this.transporter) {
+      try {
         await this.transporter.sendMail(mailOptions);
-      } else {
-        console.log(`[DEV MODE] Welcome email would be sent to ${email}`);
+        console.log(`✓ Welcome email sent to ${email}`);
+      } catch (error: any) {
+        // Welcome email is not critical, just log the error
+        if (this.configService.get<string>('NODE_ENV') === 'development') {
+          console.log(
+            `[DEV MODE] Welcome email failed (non-critical): ${error.message}`,
+          );
+        } else {
+          console.error('Failed to send welcome email:', error);
+        }
       }
-    } catch (error) {
-      console.error('Failed to send welcome email:', error);
-      // Don't throw - welcome email is not critical
+    } else {
+      console.log(`[DEV MODE] Welcome email would be sent to ${email}`);
     }
   }
 }

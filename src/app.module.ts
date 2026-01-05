@@ -8,6 +8,7 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { CompaniesModule } from './companies/companies.module';
+import { CompanySettingsModule } from './company-settings/company-settings.module';
 import { ReceiptsModule } from './receipts/receipts.module';
 import { LoggingModule } from './logging/logging.module';
 import { CommonModule } from './common/common.module';
@@ -48,6 +49,7 @@ import { CommonModule } from './common/common.module';
     AuthModule,
     UsersModule,
     CompaniesModule,
+    CompanySettingsModule,
     ReceiptsModule,
     LoggingModule,
   ],

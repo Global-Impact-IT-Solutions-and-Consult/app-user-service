@@ -7,10 +7,6 @@ import {
 } from 'typeorm';
 
 @Entity('logs')
-@Index(['companyId', 'environment', 'timestamp'])
-@Index(['receiptId', 'timestamp'])
-@Index(['eventType', 'timestamp'])
-@Index(['companyId', 'environment', 'eventType', 'timestamp'])
 export class Log {
   @PrimaryGeneratedColumn('uuid')
   id: string;

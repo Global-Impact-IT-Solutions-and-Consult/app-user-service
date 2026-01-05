@@ -8,6 +8,7 @@ import {
   Req,
   HttpCode,
   HttpStatus,
+  NotFoundException,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -44,6 +45,7 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
   @Post('signup')
   @ApiOperation({ summary: 'User registration (sends OTP to email)' })
+  @ApiBody({ type: SignupDto })
   @ApiResponse({
     status: 201,
     description: 'User created successfully, OTP sent to email',
@@ -73,6 +75,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'User login (sends OTP to email for MFA)' })
+  @ApiBody({ type: LoginDto })
   @ApiResponse({
     status: 200,
     description: 'Login successful, OTP sent to email',
@@ -95,6 +98,7 @@ export class AuthController {
   @Post('verify-mfa')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Verify email OTP code' })
+  @ApiBody({ type: MfaVerifyDto })
   @ApiResponse({
     status: 200,
     description: 'OTP verified, JWT token returned',
@@ -120,6 +124,7 @@ export class AuthController {
   @Post('resend-otp')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Resend OTP code to email' })
+  @ApiBody({ type: ResendOtpDto })
   @ApiResponse({
     status: 200,
     description: 'OTP resent to email',
@@ -169,6 +174,7 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({ summary: 'Switch between Test and Live environments' })
+  @ApiBody({ type: SwitchEnvironmentDto })
   @ApiResponse({
     status: 200,
     description: 'Environment switched successfully',
@@ -217,7 +223,7 @@ export class AuthController {
   async getProfile(@CurrentUser() user: CurrentUserPayload) {
     const userDoc = await this.usersService.findById(user.userId);
     if (!userDoc) {
-      throw new Error('User not found');
+      throw new NotFoundException('User not found');
     }
 
     return {
