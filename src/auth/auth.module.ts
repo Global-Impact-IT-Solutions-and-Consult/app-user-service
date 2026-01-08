@@ -13,6 +13,7 @@ import { User } from '../users/entities/user.entity';
 import { Company } from '../companies/entities/company.entity';
 import { UsersModule } from '../users/users.module';
 import { CommonModule } from '../common/common.module';
+import { CompanySettingsModule } from '../company-settings/company-settings.module';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { CommonModule } from '../common/common.module';
     ]),
     UsersModule,
     CommonModule,
+    CompanySettingsModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, LocalStrategy, GoogleStrategy],

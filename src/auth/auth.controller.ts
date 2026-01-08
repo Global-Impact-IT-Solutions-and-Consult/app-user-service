@@ -26,6 +26,9 @@ import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { SignupDto } from './dto/signup.dto';
 import { SwitchEnvironmentDto } from './dto/switch-environment.dto';
 import { ResendOtpDto } from './dto/resend-otp.dto';
+import { SetupTotpResponseDto } from './dto/setup-totp.dto';
+import { EnableTotpDto } from './dto/enable-totp.dto';
+import { DisableTotpDto } from './dto/disable-totp.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
@@ -97,11 +100,11 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @Post('verify-mfa')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify email OTP code' })
+  @ApiOperation({ summary: 'Verify MFA code (email OTP or authenticator app TOTP)' })
   @ApiBody({ type: MfaVerifyDto })
   @ApiResponse({
     status: 200,
-    description: 'OTP verified, JWT token returned',
+    description: 'MFA verified, JWT token returned',
     schema: {
       example: {
         accessToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
@@ -114,7 +117,7 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 401, description: 'Invalid or expired OTP code' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired MFA code' })
   async verifyMfa(@Body() mfaVerifyDto: MfaVerifyDto) {
     return this.authService.verifyMfa(mfaVerifyDto);
   }
@@ -238,6 +241,74 @@ export class AuthController {
       roles: userDoc.roles,
       permissions: userDoc.permissions,
       isEmailVerified: userDoc.isEmailVerified,
+      totpEnabled: userDoc.totpEnabled,
     };
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Get('mfa/setup')
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Setup authenticator app (get QR code)' })
+  @ApiResponse({
+    status: 200,
+    description: 'QR code and secret for authenticator app setup',
+    type: SetupTotpResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({ status: 401, description: 'Unauthorized' })
+  async setupTotp(@CurrentUser() user: CurrentUserPayload) {
+    return this.authService.setupTotp(user.userId);
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('mfa/enable')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Enable authenticator app after verification' })
+  @ApiBody({ type: EnableTotpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Authenticator app enabled successfully',
+    schema: {
+      example: {
+        message: 'Authenticator app enabled successfully',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({ status: 401, description: 'Invalid TOTP code' })
+  async enableTotp(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() enableTotpDto: EnableTotpDto,
+  ) {
+    return this.authService.enableTotp(
+      user.userId,
+      enableTotpDto.code,
+      enableTotpDto.secret,
+    );
+  }
+
+  @UseGuards(JwtAuthGuard)
+  @Post('mfa/disable')
+  @HttpCode(HttpStatus.OK)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Disable authenticator app' })
+  @ApiBody({ type: DisableTotpDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Authenticator app disabled successfully',
+    schema: {
+      example: {
+        message: 'Authenticator app disabled successfully',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Authenticator app not enabled' })
+  @ApiResponse({ status: 401, description: 'Invalid TOTP code' })
+  async disableTotp(
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() disableTotpDto: DisableTotpDto,
+  ) {
+    return this.authService.disableTotp(user.userId, disableTotpDto.code);
   }
 }

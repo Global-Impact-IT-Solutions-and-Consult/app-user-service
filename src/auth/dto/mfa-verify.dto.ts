@@ -10,7 +10,7 @@ export class MfaVerifyDto {
   userId: string;
 
   @ApiProperty({
-    description: '6-digit OTP code sent to your email',
+    description: '6-digit code from email OTP or authenticator app',
     example: '123456',
     minLength: 6,
     maxLength: 6,

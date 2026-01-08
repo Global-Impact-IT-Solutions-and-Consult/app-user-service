@@ -3,7 +3,6 @@ import {
   PrimaryGeneratedColumn,
   Column,
   ManyToMany,
-  JoinTable,
   ManyToOne,
   JoinColumn,
   CreateDateColumn,
@@ -31,6 +30,12 @@ export class User {
 
   @Column({ type: 'varchar', nullable: true, length: 255 })
   mfaSecret: string | null; // For backward compatibility
+
+  @Column({ type: 'varchar', nullable: true, length: 255 })
+  totpSecret: string | null; // TOTP secret for authenticator app (stored encrypted at rest by database)
+
+  @Column({ default: false })
+  totpEnabled: boolean; // Whether authenticator app is enabled
 
   @Column({ type: 'varchar', nullable: true, length: 10 })
   otpCode: string | null; // Email OTP code

@@ -18,7 +18,6 @@ export class CompanySettings {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Index()
   @Column()
   companyId: string;
 

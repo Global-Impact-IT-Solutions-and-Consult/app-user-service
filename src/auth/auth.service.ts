@@ -16,7 +16,9 @@ import { SwitchEnvironmentDto } from './dto/switch-environment.dto';
 import { UsersService } from '../users/users.service';
 import { CurrentUserPayload } from '../common/decorators/current-user.decorator';
 import { EmailService } from '../common/services/email.service';
+import { TotpService } from '../common/services/totp.service';
 import { OtpGeneratorUtil } from '../common/utils/otp-generator.util';
+import { CompanySettingsService } from '../company-settings/company-settings.service';
 
 @Injectable()
 export class AuthService {
@@ -28,6 +30,8 @@ export class AuthService {
     private jwtService: JwtService,
     private usersService: UsersService,
     private emailService: EmailService,
+    private totpService: TotpService,
+    private companySettingsService: CompanySettingsService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -98,7 +102,26 @@ export class AuthService {
       lockedUntil: null,
     });
 
-    // Generate and send OTP via email (Mandatory MFA)
+    // Check if company requires MFA
+    let companyRequiresMfa = false;
+    if (user.currentCompanyId) {
+      try {
+        const companySettings =
+          await this.companySettingsService.getCompanySettings(
+            user.currentCompanyId,
+            user.id,
+          );
+        companyRequiresMfa = companySettings.mfaRequired;
+      } catch (error) {
+        // If company settings not found or access denied, default to requiring MFA
+        companyRequiresMfa = true;
+      }
+    } else {
+      // Default to requiring MFA if no company
+      companyRequiresMfa = true;
+    }
+
+    // Generate and send OTP via email (as fallback or if TOTP not enabled)
     const otpCode = OtpGeneratorUtil.generateOTP();
     const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10); // 10 minutes
 
@@ -108,14 +131,25 @@ export class AuthService {
       mfaEnabled: true,
     });
 
-    // Send OTP via email
+    // Send OTP via email (always send as fallback)
     await this.emailService.sendOTP(user.email, otpCode);
 
-    return {
+    const response: any = {
       requiresMfa: true,
-      message: 'OTP sent to your email',
+      message: user.totpEnabled
+        ? 'Use your authenticator app or check your email for OTP'
+        : 'OTP sent to your email',
       tempToken: await this.generateTempToken(user.id),
     };
+
+    if (user.totpEnabled) {
+      response.totpEnabled = true;
+      response.mfaMethods = ['totp', 'email'];
+    } else {
+      response.mfaMethods = ['email'];
+    }
+
+    return response;
   }
 
   async verifyMfa(mfaVerifyDto: MfaVerifyDto) {
@@ -128,22 +162,46 @@ export class AuthService {
       throw new UnauthorizedException('Invalid MFA session');
     }
 
-    // Check if OTP exists and is not expired
-    if (!user.otpCode || !user.otpExpiresAt) {
-      throw new UnauthorizedException(
-        'No OTP found. Please request a new one.',
+    let isVerified = false;
+
+    // Check if user has authenticator app enabled - try TOTP first
+    if (user.totpEnabled && user.totpSecret) {
+      // Verify TOTP code from authenticator app
+      const isValidTotp = this.totpService.verifyToken(
+        mfaVerifyDto.code,
+        user.totpSecret,
       );
+
+      if (isValidTotp) {
+        isVerified = true;
+      }
     }
 
-    if (OtpGeneratorUtil.isOTPExpired(user.otpExpiresAt)) {
-      throw new UnauthorizedException(
-        'OTP has expired. Please request a new one.',
-      );
+    // If TOTP verification didn't succeed, try email OTP
+    if (!isVerified) {
+      // Check if OTP exists and is not expired
+      if (!user.otpCode || !user.otpExpiresAt) {
+        throw new UnauthorizedException(
+          'No OTP found. Please request a new one.',
+        );
+      }
+
+      if (OtpGeneratorUtil.isOTPExpired(user.otpExpiresAt)) {
+        throw new UnauthorizedException(
+          'OTP has expired. Please request a new one.',
+        );
+      }
+
+      // Verify OTP code
+      if (user.otpCode !== mfaVerifyDto.code) {
+        throw new UnauthorizedException('Invalid OTP code');
+      }
+
+      isVerified = true;
     }
 
-    // Verify OTP code
-    if (user.otpCode !== mfaVerifyDto.code) {
-      throw new UnauthorizedException('Invalid OTP code');
+    if (!isVerified) {
+      throw new UnauthorizedException('Invalid verification code');
     }
 
     // Clear OTP after successful verification
@@ -245,6 +303,25 @@ export class AuthService {
       await this.userRepository.save(user);
     }
 
+    // Check if company requires MFA
+    let companyRequiresMfa = false;
+    if (user.currentCompanyId) {
+      try {
+        const companySettings =
+          await this.companySettingsService.getCompanySettings(
+            user.currentCompanyId,
+            user.id,
+          );
+        companyRequiresMfa = companySettings.mfaRequired;
+      } catch (error) {
+        // If company settings not found or access denied, default to requiring MFA
+        companyRequiresMfa = true;
+      }
+    } else {
+      // Default to requiring MFA if no company
+      companyRequiresMfa = true;
+    }
+
     // Generate and send OTP for MFA (even for Google users)
     const otpCode = OtpGeneratorUtil.generateOTP();
     const otpExpiresAt = OtpGeneratorUtil.generateOTPExpiration(10);
@@ -257,11 +334,22 @@ export class AuthService {
 
     await this.emailService.sendOTP(user.email, otpCode);
 
-    return {
+    const response: any = {
       requiresMfa: true,
-      message: 'OTP sent to your email',
+      message: user.totpEnabled
+        ? 'Use your authenticator app or check your email for OTP'
+        : 'OTP sent to your email',
       tempToken: await this.generateTempToken(user.id),
     };
+
+    if (user.totpEnabled) {
+      response.totpEnabled = true;
+      response.mfaMethods = ['totp', 'email'];
+    } else {
+      response.mfaMethods = ['email'];
+    }
+
+    return response;
   }
 
   async switchEnvironment(userId: string, switchDto: SwitchEnvironmentDto) {
@@ -357,5 +445,88 @@ export class AuthService {
     }
 
     await this.userRepository.update(user.id, updateData);
+  }
+
+  /**
+   * Setup TOTP for authenticator app
+   */
+  async setupTotp(userId: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.totpEnabled) {
+      throw new BadRequestException('Authenticator app is already enabled');
+    }
+
+    const secret = this.totpService.generateSecret(user.email);
+    const qrCode = await this.totpService.generateQRCode(secret, user.email);
+
+    return {
+      qrCode,
+      secret, // Temporary - user should verify before enabling
+      manualEntryKey: secret,
+    };
+  }
+
+  /**
+   * Enable TOTP after verification
+   */
+  async enableTotp(userId: string, code: string, secret: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (user.totpEnabled) {
+      throw new BadRequestException('Authenticator app is already enabled');
+    }
+
+    // Verify the code with the provided secret
+    const isValid = this.totpService.verifyToken(code, secret);
+    if (!isValid) {
+      throw new UnauthorizedException('Invalid TOTP code');
+    }
+
+    // Store the secret and enable TOTP
+    await this.userRepository.update(user.id, {
+      totpSecret: secret,
+      totpEnabled: true,
+    });
+
+    return {
+      message: 'Authenticator app enabled successfully',
+    };
+  }
+
+  /**
+   * Disable TOTP
+   */
+  async disableTotp(userId: string, code: string) {
+    const user = await this.userRepository.findOne({ where: { id: userId } });
+    if (!user) {
+      throw new NotFoundException('User not found');
+    }
+
+    if (!user.totpEnabled || !user.totpSecret) {
+      throw new BadRequestException('Authenticator app is not enabled');
+    }
+
+    // Verify the code before disabling
+    const isValid = this.totpService.verifyToken(code, user.totpSecret);
+    if (!isValid) {
+      throw new UnauthorizedException('Invalid TOTP code');
+    }
+
+    // Clear the secret and disable TOTP
+    await this.userRepository.update(user.id, {
+      totpSecret: null,
+      totpEnabled: false,
+    });
+
+    return {
+      message: 'Authenticator app disabled successfully',
+    };
   }
 }
