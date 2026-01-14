@@ -134,12 +134,21 @@ export class AuthService {
     // Send OTP via email (always send as fallback)
     await this.emailService.sendOTP(user.email, otpCode);
 
+    const tempToken = await this.generateTempToken(user.id);
+
+    // Log userId and tempToken for debugging (same format as OTP logging)
+    console.log(`\n========================================`);
+    console.log(`[LOGIN] User ID: ${user.id}`);
+    console.log(`[LOGIN] Email: ${user.email}`);
+    console.log(`[LOGIN] Temp Token: ${tempToken}`);
+    console.log(`========================================\n`);
+
     const response: any = {
       requiresMfa: true,
       message: user.totpEnabled
         ? 'Use your authenticator app or check your email for OTP'
         : 'OTP sent to your email',
-      tempToken: await this.generateTempToken(user.id),
+      tempToken,
     };
 
     if (user.totpEnabled) {
@@ -268,9 +277,18 @@ export class AuthService {
     // Send OTP via email
     await this.emailService.sendOTP(user.email, otpCode);
 
+    const tempToken = await this.generateTempToken(userId);
+    
+    // Log userId and tempToken for debugging (same format as OTP logging)
+    console.log(`\n========================================`);
+    console.log(`[RESEND OTP] User ID: ${userId}`);
+    console.log(`[RESEND OTP] Email: ${user.email}`);
+    console.log(`[RESEND OTP] Temp Token: ${tempToken}`);
+    console.log(`========================================\n`);
+
     return {
       message: 'OTP sent to your email',
-      tempToken: await this.generateTempToken(userId),
+      tempToken,
     };
   }
 
@@ -334,12 +352,21 @@ export class AuthService {
 
     await this.emailService.sendOTP(user.email, otpCode);
 
+    const tempToken = await this.generateTempToken(user.id);
+    
+    // Log userId and tempToken for debugging (same format as OTP logging)
+    console.log(`\n========================================`);
+    console.log(`[GOOGLE LOGIN] User ID: ${user.id}`);
+    console.log(`[GOOGLE LOGIN] Email: ${user.email}`);
+    console.log(`[GOOGLE LOGIN] Temp Token: ${tempToken}`);
+    console.log(`========================================\n`);
+
     const response: any = {
       requiresMfa: true,
       message: user.totpEnabled
         ? 'Use your authenticator app or check your email for OTP'
         : 'OTP sent to your email',
-      tempToken: await this.generateTempToken(user.id),
+      tempToken,
     };
 
     if (user.totpEnabled) {

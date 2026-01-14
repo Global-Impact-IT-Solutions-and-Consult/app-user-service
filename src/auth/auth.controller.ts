@@ -67,11 +67,20 @@ export class AuthController {
   @ApiResponse({ status: 400, description: 'Validation error' })
   async signup(@Body() signupDto: SignupDto) {
     const user = await this.usersService.create(signupDto);
+    const tempToken = await this.authService.generateTempToken(user.id);
+
+    // Log userId and tempToken for debugging (same format as OTP logging)
+    console.log(`\n========================================`);
+    console.log(`[SIGNUP] User ID: ${user.id}`);
+    console.log(`[SIGNUP] Email: ${user.email}`);
+    console.log(`[SIGNUP] Temp Token: ${tempToken}`);
+    console.log(`========================================\n`);
+
     return {
       message: 'User created successfully. OTP sent to your email.',
       userId: user.id,
       requiresMfa: true,
-      tempToken: await this.authService.generateTempToken(user.id),
+      tempToken,
     };
   }
 
@@ -102,7 +111,9 @@ export class AuthController {
   @Throttle({ default: { limit: 10, ttl: 60000 } }) // 10 requests per minute
   @Post('verify-mfa')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Verify MFA code (email OTP or authenticator app TOTP)' })
+  @ApiOperation({
+    summary: 'Verify MFA code (email OTP or authenticator app TOTP)',
+  })
   @ApiBody({ type: MfaVerifyDto })
   @ApiResponse({
     status: 200,
@@ -149,14 +160,19 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
   @Post('mfa/setup-temp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Setup authenticator app during signup/login (uses tempToken)' })
+  @ApiOperation({
+    summary: 'Setup authenticator app during signup/login (uses tempToken)',
+  })
   @ApiBody({ type: SetupTotpTempDto })
   @ApiResponse({
     status: 200,
     description: 'QR code and secret for authenticator app setup',
     type: SetupTotpResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({
+    status: 400,
+    description: 'Authenticator app already enabled',
+  })
   @ApiResponse({ status: 401, description: 'Invalid or expired temp token' })
   async setupTotpWithTempToken(@Body() body: SetupTotpTempDto) {
     const userId = this.authService.validateTempToken(body.tempToken);
@@ -167,7 +183,9 @@ export class AuthController {
   @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
   @Post('mfa/enable-temp')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Enable authenticator app during signup/login (uses tempToken)' })
+  @ApiOperation({
+    summary: 'Enable authenticator app during signup/login (uses tempToken)',
+  })
   @ApiBody({ type: EnableTotpTempDto })
   @ApiResponse({
     status: 200,
@@ -178,7 +196,10 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({
+    status: 400,
+    description: 'Authenticator app already enabled',
+  })
   @ApiResponse({ status: 401, description: 'Invalid TOTP code or temp token' })
   async enableTotpWithTempToken(@Body() body: EnableTotpTempDto) {
     const userId = this.authService.validateTempToken(body.tempToken);
@@ -296,7 +317,10 @@ export class AuthController {
     description: 'QR code and secret for authenticator app setup',
     type: SetupTotpResponseDto,
   })
-  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({
+    status: 400,
+    description: 'Authenticator app already enabled',
+  })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
   async setupTotp(@CurrentUser() user: CurrentUserPayload) {
     return this.authService.setupTotp(user.userId);
@@ -317,7 +341,10 @@ export class AuthController {
       },
     },
   })
-  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({
+    status: 400,
+    description: 'Authenticator app already enabled',
+  })
   @ApiResponse({ status: 401, description: 'Invalid TOTP code' })
   async enableTotp(
     @CurrentUser() user: CurrentUserPayload,
