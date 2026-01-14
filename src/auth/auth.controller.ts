@@ -29,6 +29,8 @@ import { ResendOtpDto } from './dto/resend-otp.dto';
 import { SetupTotpResponseDto } from './dto/setup-totp.dto';
 import { EnableTotpDto } from './dto/enable-totp.dto';
 import { DisableTotpDto } from './dto/disable-totp.dto';
+import { SetupTotpTempDto } from './dto/setup-totp-temp.dto';
+import { EnableTotpTempDto } from './dto/enable-totp-temp.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
@@ -141,6 +143,46 @@ export class AuthController {
   @ApiResponse({ status: 404, description: 'User not found' })
   async resendOTP(@Body() resendOtpDto: ResendOtpDto) {
     return this.authService.resendOTP(resendOtpDto.userId);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
+  @Post('mfa/setup-temp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Setup authenticator app during signup/login (uses tempToken)' })
+  @ApiBody({ type: SetupTotpTempDto })
+  @ApiResponse({
+    status: 200,
+    description: 'QR code and secret for authenticator app setup',
+    type: SetupTotpResponseDto,
+  })
+  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({ status: 401, description: 'Invalid or expired temp token' })
+  async setupTotpWithTempToken(@Body() body: SetupTotpTempDto) {
+    const userId = this.authService.validateTempToken(body.tempToken);
+    return this.authService.setupTotp(userId);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } }) // 5 requests per minute
+  @Post('mfa/enable-temp')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Enable authenticator app during signup/login (uses tempToken)' })
+  @ApiBody({ type: EnableTotpTempDto })
+  @ApiResponse({
+    status: 200,
+    description: 'Authenticator app enabled successfully',
+    schema: {
+      example: {
+        message: 'Authenticator app enabled successfully',
+      },
+    },
+  })
+  @ApiResponse({ status: 400, description: 'Authenticator app already enabled' })
+  @ApiResponse({ status: 401, description: 'Invalid TOTP code or temp token' })
+  async enableTotpWithTempToken(@Body() body: EnableTotpTempDto) {
+    const userId = this.authService.validateTempToken(body.tempToken);
+    return this.authService.enableTotp(userId, body.code, body.secret);
   }
 
   @Public()

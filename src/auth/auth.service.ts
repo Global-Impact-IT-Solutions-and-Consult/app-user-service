@@ -433,6 +433,24 @@ export class AuthService {
     );
   }
 
+  /**
+   * Validate tempToken and extract userId
+   */
+  validateTempToken(tempToken: string): string {
+    try {
+      const decoded = this.jwtService.verify(tempToken) as {
+        userId: string;
+        type: string;
+      };
+      if (decoded.type !== 'mfa-temp') {
+        throw new UnauthorizedException('Invalid temp token type');
+      }
+      return decoded.userId;
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired temp token');
+    }
+  }
+
   private async handleFailedLogin(user: User) {
     const failedAttempts = (user.failedLoginAttempts || 0) + 1;
     const updateData: any = {
