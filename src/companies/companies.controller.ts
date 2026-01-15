@@ -28,6 +28,7 @@ import {
   TestWebhookDto,
 } from './dto/webhook.dto';
 import { UpdateOnboardingStepDto } from './dto/update-onboarding-step.dto';
+import { RegenerateApiKeysDto } from './dto/regenerate-api-keys.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 
@@ -147,6 +148,35 @@ export class CompaniesController {
   ) {
     await this.companiesService.revokeApiKey(keyId, companyId, user.userId);
     return { message: 'API key revoked successfully' };
+  }
+
+  @Post(':id/api-keys/regenerate')
+  @ApiOperation({ summary: 'Regenerate API keys for a specific environment' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiBody({ type: RegenerateApiKeysDto })
+  @ApiResponse({
+    status: 200,
+    description: 'API keys regenerated successfully',
+    schema: {
+      example: {
+        publicKey: 'pk_test_abc123...',
+        secretKey: 'sk_test_xyz789...',
+        environment: 'test',
+      },
+    },
+  })
+  @ApiResponse({ status: 404, description: 'Company or settings not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async regenerateApiKeys(
+    @Param('id') companyId: string,
+    @Body() regenerateDto: RegenerateApiKeysDto,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.regenerateApiKeys(
+      companyId,
+      user.userId,
+      regenerateDto.environment,
+    );
   }
 
   // Webhook Management

@@ -246,6 +246,25 @@ export class CompaniesService {
     );
   }
 
+  async regenerateApiKeys(
+    companyId: string,
+    userId: string,
+    environment: SettingsType,
+  ): Promise<{ publicKey: string; secretKey: string; environment: SettingsType }> {
+    // Verify user has access to company
+    await this.companySettingsService.getCompanySettings(companyId, userId);
+
+    // Regenerate API keys using CompanySettingsService
+    const { publicKey, secretKey } =
+      await this.companySettingsService.regenerateApiKeys(
+        companyId,
+        userId,
+        environment,
+      );
+
+    return { publicKey, secretKey, environment };
+  }
+
   // Webhook Management - Delegated to CompanySettingsService
   async createWebhook(
     companyId: string,
