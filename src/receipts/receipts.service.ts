@@ -47,6 +47,20 @@ export class ReceiptsService {
           .pipe(timeout(this.requestTimeout)),
       );
 
+      // Log receipt query
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          eventType: 'receipt.query',
+          message: 'User queried receipts',
+          level: 'info',
+          metadata: { page: params.page, limit: params.limit, dateFrom: params.dateFrom, dateTo: params.dateTo },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+
       return response.data;
     } catch (error: any) {
       this.logger.error(
@@ -121,6 +135,20 @@ export class ReceiptsService {
           })
           .pipe(timeout(this.requestTimeout)),
       );
+
+      // Log receipt view
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          receiptId,
+          eventType: 'receipt.viewed',
+          message: `User viewed receipt ${receiptId}`,
+          level: 'info',
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
 
       return response.data;
     } catch (error: any) {
@@ -197,6 +225,21 @@ export class ReceiptsService {
           })
           .pipe(timeout(this.requestTimeout)),
       );
+
+      // Log receipt download
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          receiptId,
+          eventType: 'receipt.downloaded',
+          message: `User downloaded receipt ${receiptId} in ${format} format`,
+          level: 'info',
+          metadata: { format },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
 
       return {
         data: response.data,
@@ -275,6 +318,20 @@ export class ReceiptsService {
           })
           .pipe(timeout(this.requestTimeout)),
       );
+
+      // Log receipt status check
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          receiptId,
+          eventType: 'receipt.status.checked',
+          message: `User checked status for receipt ${receiptId}`,
+          level: 'info',
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
 
       return response.data;
     } catch (error: any) {

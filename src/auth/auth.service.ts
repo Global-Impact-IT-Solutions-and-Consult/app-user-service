@@ -19,6 +19,7 @@ import { EmailService } from '../common/services/email.service';
 import { TotpService } from '../common/services/totp.service';
 import { OtpGeneratorUtil } from '../common/utils/otp-generator.util';
 import { CompanySettingsService } from '../company-settings/company-settings.service';
+import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class AuthService {
@@ -32,6 +33,7 @@ export class AuthService {
     private emailService: EmailService,
     private totpService: TotpService,
     private companySettingsService: CompanySettingsService,
+    private loggingService: LoggingService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -248,6 +250,22 @@ export class AuthService {
     );
     const accessToken = this.jwtService.sign(payload);
 
+    // Log successful MFA verification and login
+    if (currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: currentCompanyId,
+          environment: currentEnvironment,
+          eventType: 'user.login.success',
+          message: 'User successfully logged in after MFA verification',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email },
+        });
+      } catch (error) {
+        // Don't fail login if logging fails
+      }
+    }
+
     return {
       accessToken,
       user: {
@@ -278,13 +296,29 @@ export class AuthService {
     await this.emailService.sendOTP(user.email, otpCode);
 
     const tempToken = await this.generateTempToken(userId);
-    
+
     // Log userId and tempToken for debugging (same format as OTP logging)
     console.log(`\n========================================`);
     console.log(`[RESEND OTP] User ID: ${userId}`);
     console.log(`[RESEND OTP] Email: ${user.email}`);
     console.log(`[RESEND OTP] Temp Token: ${tempToken}`);
     console.log(`========================================\n`);
+
+    // Log OTP resend
+    if (user.currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: user.currentCompanyId,
+          environment: user.currentEnvironment || 'test',
+          eventType: 'user.otp.resend',
+          message: 'OTP code resent to user email',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+    }
 
     return {
       message: 'OTP sent to your email',
@@ -353,13 +387,29 @@ export class AuthService {
     await this.emailService.sendOTP(user.email, otpCode);
 
     const tempToken = await this.generateTempToken(user.id);
-    
+
     // Log userId and tempToken for debugging (same format as OTP logging)
     console.log(`\n========================================`);
     console.log(`[GOOGLE LOGIN] User ID: ${user.id}`);
     console.log(`[GOOGLE LOGIN] Email: ${user.email}`);
     console.log(`[GOOGLE LOGIN] Temp Token: ${tempToken}`);
     console.log(`========================================\n`);
+
+    // Log Google login attempt
+    if (user.currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: user.currentCompanyId,
+          environment: user.currentEnvironment || 'test',
+          eventType: 'user.login.google.initiated',
+          message: 'User initiated Google OAuth login, MFA required',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email, isNewUser: !user.id },
+        });
+      } catch (error) {
+        // Don't fail login if logging fails
+      }
+    }
 
     const response: any = {
       requiresMfa: true,
@@ -426,6 +476,22 @@ export class AuthService {
       updatedUser.permissions || [],
     );
     const accessToken = this.jwtService.sign(payload);
+
+    // Log environment switch
+    if (companyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: companyId,
+          environment: switchDto.environment,
+          eventType: 'user.environment.switched',
+          message: `User switched environment to ${switchDto.environment}`,
+          level: 'info',
+          metadata: { userId, previousCompanyId: updatedUser.currentCompanyId, newCompanyId: companyId },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+    }
 
     return {
       accessToken,
@@ -508,6 +574,22 @@ export class AuthService {
     const secret = this.totpService.generateSecret(user.email);
     const qrCode = await this.totpService.generateQRCode(secret, user.email);
 
+    // Log TOTP setup
+    if (user.currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: user.currentCompanyId,
+          environment: user.currentEnvironment || 'test',
+          eventType: 'user.totp.setup',
+          message: 'User initiated TOTP authenticator app setup',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+    }
+
     return {
       qrCode,
       secret, // Temporary - user should verify before enabling
@@ -540,6 +622,22 @@ export class AuthService {
       totpEnabled: true,
     });
 
+    // Log TOTP enabled
+    if (user.currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: user.currentCompanyId,
+          environment: user.currentEnvironment || 'test',
+          eventType: 'user.totp.enabled',
+          message: 'User enabled TOTP authenticator app',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+    }
+
     return {
       message: 'Authenticator app enabled successfully',
     };
@@ -569,6 +667,22 @@ export class AuthService {
       totpSecret: null,
       totpEnabled: false,
     });
+
+    // Log TOTP disabled
+    if (user.currentCompanyId) {
+      try {
+        await this.loggingService.createLog({
+          companyId: user.currentCompanyId,
+          environment: user.currentEnvironment || 'test',
+          eventType: 'user.totp.disabled',
+          message: 'User disabled TOTP authenticator app',
+          level: 'info',
+          metadata: { userId: user.id, email: user.email },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+    }
 
     return {
       message: 'Authenticator app disabled successfully',

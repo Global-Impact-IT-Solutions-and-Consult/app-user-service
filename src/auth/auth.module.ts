@@ -14,6 +14,7 @@ import { Company } from '../companies/entities/company.entity';
 import { UsersModule } from '../users/users.module';
 import { CommonModule } from '../common/common.module';
 import { CompanySettingsModule } from '../company-settings/company-settings.module';
+import { LoggingModule } from '../logging/logging.module';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { CompanySettingsModule } from '../company-settings/company-settings.modu
     UsersModule,
     CommonModule,
     CompanySettingsModule,
+    LoggingModule,
   ],
   controllers: [AuthController],
   providers: [AuthService, JwtStrategy, LocalStrategy, GoogleStrategy],

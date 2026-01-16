@@ -24,6 +24,7 @@ import { EncryptionUtil } from '../common/utils/encryption.util';
 import { UsersService } from '../users/users.service';
 import axios from 'axios';
 import { SettingsType } from './entities/settings.entity';
+import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class CompaniesService {
@@ -36,6 +37,7 @@ export class CompaniesService {
     private userRepository: Repository<User>,
     private usersService: UsersService,
     private companySettingsService: CompanySettingsService,
+    private loggingService: LoggingService,
   ) {}
 
   async create(
@@ -94,6 +96,20 @@ export class CompaniesService {
         where: { id: savedCompany.id },
         relations: ['members', 'companySettings', 'companySettings.settings'],
       });
+
+      // Log company creation
+      try {
+        await this.loggingService.createLog({
+          companyId: savedCompany.id,
+          environment: 'test',
+          eventType: 'company.created',
+          message: `Company "${savedCompany.name}" created`,
+          level: 'info',
+          metadata: { userId, companyName: savedCompany.name, companyId: savedCompany.id },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
 
       return companyWithRelations || savedCompany;
     } catch (error: any) {
@@ -169,7 +185,25 @@ export class CompaniesService {
       ...(company.onboardingSteps || {}),
       [step]: completed,
     };
-    return this.companyRepository.save(company);
+    const savedCompany = await this.companyRepository.save(company);
+
+    // Log onboarding step update
+    try {
+      const user = await this.userRepository.findOne({ where: { id: companyId } });
+      const environment = user?.currentEnvironment || 'test';
+      await this.loggingService.createLog({
+        companyId,
+        environment,
+        eventType: 'company.onboarding_step.updated',
+        message: `Onboarding step "${step}" ${completed ? 'completed' : 'reverted'}`,
+        level: 'info',
+        metadata: { step, completed },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
+    return savedCompany;
   }
 
   async approveCompany(
@@ -244,6 +278,22 @@ export class CompaniesService {
       userId,
       settings.type,
     );
+
+    // Log API key revocation
+    try {
+      const user = await this.userRepository.findOne({ where: { id: userId } });
+      const environment = settings.type === SettingsType.LIVE ? 'live' : 'test';
+      await this.loggingService.createLog({
+        companyId,
+        environment,
+        eventType: 'api-key.revoked',
+        message: `API key revoked for ${settings.type} environment`,
+        level: 'warning',
+        metadata: { userId, settingsId, environment: settings.type },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
   }
 
   async regenerateApiKeys(
@@ -262,6 +312,21 @@ export class CompaniesService {
         environment,
       );
 
+    // Log API key regeneration
+    try {
+      const env = environment === SettingsType.LIVE ? 'live' : 'test';
+      await this.loggingService.createLog({
+        companyId,
+        environment: env,
+        eventType: 'api-key.regenerated',
+        message: `API keys regenerated for ${environment} environment`,
+        level: 'info',
+        metadata: { userId, environment },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
     return { publicKey, secretKey, environment };
   }
 
@@ -278,6 +343,20 @@ export class CompaniesService {
       createWebhookDto.url,
       createWebhookDto.events || [],
     );
+
+    // Log webhook creation
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: createWebhookDto.environment,
+        eventType: 'webhook.created',
+        message: `Webhook created: ${createWebhookDto.url}`,
+        level: 'info',
+        metadata: { userId, webhookId: result.webhook.id, url: createWebhookDto.url, events: createWebhookDto.events },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
 
     return {
       ...result.webhook,
@@ -306,7 +385,7 @@ export class CompaniesService {
     userId: string,
     updateWebhookDto: UpdateWebhookDto,
   ): Promise<Webhook> {
-    return this.companySettingsService.updateWebhook(
+    const webhook = await this.companySettingsService.updateWebhook(
       webhookId,
       companyId,
       userId,
@@ -314,6 +393,22 @@ export class CompaniesService {
       updateWebhookDto.events,
       updateWebhookDto.isActive,
     );
+
+    // Log webhook update
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: webhook.settings.type === SettingsType.LIVE ? 'live' : 'test',
+        eventType: 'webhook.updated',
+        message: `Webhook updated: ${webhook.url}`,
+        level: 'info',
+        metadata: { userId, webhookId, url: webhook.url, isActive: webhook.isActive },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
+    return webhook;
   }
 
   async deleteWebhook(
@@ -321,11 +416,32 @@ export class CompaniesService {
     companyId: string,
     userId: string,
   ): Promise<void> {
-    return this.companySettingsService.deleteWebhook(
+    // Get webhook before deleting for logging
+    const webhook = await this.companySettingsService.getWebhookById(
       webhookId,
       companyId,
       userId,
     );
+
+    await this.companySettingsService.deleteWebhook(
+      webhookId,
+      companyId,
+      userId,
+    );
+
+    // Log webhook deletion
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: webhook.settings.type === SettingsType.LIVE ? 'live' : 'test',
+        eventType: 'webhook.deleted',
+        message: `Webhook deleted: ${webhook.url}`,
+        level: 'warning',
+        metadata: { userId, webhookId, url: webhook.url },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
   }
 
   async testWebhook(
@@ -374,6 +490,20 @@ export class CompaniesService {
       // Update webhook stats
       await this.companySettingsService.updateWebhookStats(webhookId, true);
 
+      // Log successful webhook test
+      try {
+        await this.loggingService.createLog({
+          companyId,
+          environment: webhook.settings.type === SettingsType.LIVE ? 'live' : 'test',
+          eventType: 'webhook.tested',
+          message: `Webhook test successful: ${webhook.url}`,
+          level: 'info',
+          metadata: { userId, webhookId, eventType: testDto.eventType, statusCode: response.status },
+        });
+      } catch (error) {
+        // Don't fail if logging fails
+      }
+
       return {
         success: true,
         statusCode: response.status,
@@ -382,6 +512,20 @@ export class CompaniesService {
     } catch (error: any) {
       // Update failure stats
       await this.companySettingsService.updateWebhookStats(webhookId, false);
+
+      // Log failed webhook test
+      try {
+        await this.loggingService.createLog({
+          companyId,
+          environment: webhook.settings.type === SettingsType.LIVE ? 'live' : 'test',
+          eventType: 'webhook.test.failed',
+          message: `Webhook test failed: ${webhook.url}`,
+          level: 'error',
+          metadata: { userId, webhookId, eventType: testDto.eventType, error: error.message },
+        });
+      } catch (logError) {
+        // Don't fail if logging fails
+      }
 
       return {
         success: false,
@@ -396,10 +540,32 @@ export class CompaniesService {
     companyId: string,
     userId: string,
   ): Promise<string> {
-    return this.companySettingsService.regenerateWebhookSecret(
+    const webhook = await this.companySettingsService.getWebhookById(
       webhookId,
       companyId,
       userId,
     );
+
+    const secret = await this.companySettingsService.regenerateWebhookSecret(
+      webhookId,
+      companyId,
+      userId,
+    );
+
+    // Log webhook secret regeneration
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: webhook.settings.type === SettingsType.LIVE ? 'live' : 'test',
+        eventType: 'webhook.secret.regenerated',
+        message: `Webhook signing secret regenerated: ${webhook.url}`,
+        level: 'warning',
+        metadata: { userId, webhookId, url: webhook.url },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
+    return secret;
   }
 }

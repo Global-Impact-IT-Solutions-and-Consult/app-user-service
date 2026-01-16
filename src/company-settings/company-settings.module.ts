@@ -7,6 +7,7 @@ import { Settings } from '../companies/entities/settings.entity';
 import { Webhook } from '../companies/entities/webhook.entity';
 import { WebhookEvent } from '../companies/entities/webhook-event.entity';
 import { Company } from '../companies/entities/company.entity';
+import { LoggingModule } from '../logging/logging.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { Company } from '../companies/entities/company.entity';
       WebhookEvent,
       Company,
     ]),
+    LoggingModule,
   ],
   controllers: [CompanySettingsController],
   providers: [CompanySettingsService],

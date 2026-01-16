@@ -16,6 +16,7 @@ import { Company } from '../companies/entities/company.entity';
 import { ApiKeyGeneratorUtil } from '../common/utils/api-key-generator.util';
 import { EncryptionUtil } from '../common/utils/encryption.util';
 import * as bcrypt from 'bcrypt';
+import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class CompanySettingsService {
@@ -33,6 +34,7 @@ export class CompanySettingsService {
     @InjectRepository(Company)
     private companyRepository: Repository<Company>,
     private dataSource: DataSource,
+    private loggingService: LoggingService,
   ) {}
 
   /**
@@ -191,7 +193,23 @@ export class CompanySettingsService {
     const companySettings = await this.getCompanySettings(companyId, userId);
 
     companySettings.mfaRequired = mfaRequired;
-    return this.companySettingsRepository.save(companySettings);
+    const saved = await this.companySettingsRepository.save(companySettings);
+
+    // Log MFA requirement update
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: 'test', // MFA requirement applies to both environments
+        eventType: 'company.mfa_requirement.updated',
+        message: `MFA requirement ${mfaRequired ? 'enabled' : 'disabled'} for company`,
+        level: 'info',
+        metadata: { userId, mfaRequired },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
+    return saved;
   }
 
   /**
