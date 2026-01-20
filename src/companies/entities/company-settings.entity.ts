@@ -13,12 +13,11 @@ import { Company } from './company.entity';
 import { Settings } from './settings.entity';
 
 @Entity('company_settings')
-@Index(['companyId'], { unique: true })
 export class CompanySettings {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  @Column()
+  @Column({ unique: true })
   companyId: string;
 
   @ManyToOne(() => Company, (company) => company.companySettings)

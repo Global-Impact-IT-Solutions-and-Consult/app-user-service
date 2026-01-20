@@ -3,8 +3,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-# Install yarn globally
-RUN npm install -g yarn
+# Install build dependencies for native modules (bcrypt)
+RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package.json yarn.lock ./
@@ -23,15 +23,16 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
-# Install yarn globally
-RUN npm install -g yarn
+# Install build dependencies for native modules (bcrypt)
+RUN apk add --no-cache python3 make g++
 
 # Copy package files
 COPY package.json yarn.lock ./
 
 # Install only production dependencies
 RUN yarn install --frozen-lockfile --production && \
-    yarn cache clean
+    yarn cache clean && \
+    apk del python3 make g++
 
 # Copy built application from builder
 COPY --from=builder /app/dist ./dist

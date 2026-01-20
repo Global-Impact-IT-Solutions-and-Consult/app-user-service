@@ -55,7 +55,12 @@ export class ReceiptsService {
           eventType: 'receipt.query',
           message: 'User queried receipts',
           level: 'info',
-          metadata: { page: params.page, limit: params.limit, dateFrom: params.dateFrom, dateTo: params.dateTo },
+          metadata: {
+            page: params.page,
+            limit: params.limit,
+            dateFrom: params.dateFrom,
+            dateTo: params.dateTo,
+          },
         });
       } catch (error) {
         // Don't fail if logging fails

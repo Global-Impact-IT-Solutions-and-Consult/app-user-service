@@ -32,8 +32,10 @@ import { CommonModule } from './common/common.module';
         password: config.get<string>('DB_PASSWORD') || 'postgres',
         database: config.get<string>('DB_DATABASE') || 'user-service',
         entities: [__dirname + '/**/*.entity{.ts,.js}'],
-        synchronize: config.get<string>('NODE_ENV') !== 'production', // Auto-sync schema in dev
+        synchronize: config.get<string>('NODE_ENV') !== 'production', // Auto-sync schema in dev (disabled in production)
         logging: config.get<string>('NODE_ENV') === 'development',
+        migrationsRun: false, // Don't run migrations automatically
+        migrations: [__dirname + '/**/migrations/*{.ts,.js}'],
       }),
     }),
     // Rate Limiting
