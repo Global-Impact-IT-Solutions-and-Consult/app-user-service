@@ -145,6 +145,23 @@ docker-compose up -d --build
 docker-compose exec postgres psql -U postgres -d user-service
 ```
 
+**Local Development (App runs locally, PostgreSQL in Docker):**
+
+```bash
+# Start only PostgreSQL in Docker
+docker-compose -f docker-compose.local.yml up -d
+
+# Make sure your .env file has:
+# DB_HOST=localhost
+# DB_PORT=5433
+# DB_USERNAME=postgres
+# DB_PASSWORD=postgres
+# DB_DATABASE=user-service
+
+# Then run the app locally
+yarn start:dev
+```
+
 Or start services manually:
 
 ```bash

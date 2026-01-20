@@ -1,0 +1,27 @@
+# Docker Compose for local development - PostgreSQL only
+# Use this when running the app locally (yarn start:dev) but want to use Docker PostgreSQL
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: user-service-postgres-local
+    ports:
+      - '5433:5432'  # Exposed on 5433 to avoid conflicts with local PostgreSQL on 5432
+    volumes:
+      - postgres-data-local:/var/lib/postgresql/data
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: user-service
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres-data-local:
+    driver: local
+
