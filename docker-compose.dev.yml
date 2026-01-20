@@ -3,11 +3,11 @@ version: '3.8'
 services:
   postgres:
     image: postgres:16-alpine
-    container_name: user-service-postgres
+    container_name: user-service-postgres-dev
     ports:
       - '${DB_PORT:-5433}:5432'
     volumes:
-      - postgres-data:/var/lib/postgresql/data
+      - postgres-data-dev:/var/lib/postgresql/data
     environment:
       POSTGRES_USER: ${DB_USERNAME:-postgres}
       POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
@@ -20,17 +20,22 @@ services:
       retries: 5
       start_period: 10s
     networks:
-      - user-service-network
+      - user-service-network-dev
 
   app-user-service:
     build:
       context: .
-      dockerfile: Dockerfile
-    container_name: user-service-app
+      dockerfile: Dockerfile.dev
+    container_name: user-service-app-dev
     ports:
       - '${PORT:-3000}:3000'
+    volumes:
+      - ./src:/app/src
+      - ./package.json:/app/package.json
+      - ./yarn.lock:/app/yarn.lock
+      - /app/node_modules
     environment:
-      NODE_ENV: ${NODE_ENV:-production}
+      NODE_ENV: development
       PORT: ${PORT:-3000}
       API_PREFIX: ${API_PREFIX:-api}
       # PostgreSQL Configuration
@@ -40,10 +45,10 @@ services:
       DB_PASSWORD: ${DB_PASSWORD:-postgres}
       DB_DATABASE: ${DB_DATABASE:-user-service}
       # JWT Configuration
-      JWT_SECRET: ${JWT_SECRET:-your-secret-key-change-in-production}
+      JWT_SECRET: ${JWT_SECRET:-dev-secret-key}
       JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-24h}
       # Encryption Key
-      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-your-encryption-key-change-in-production}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-dev-encryption-key-32-characters}
       # Email Configuration
       SMTP_HOST: ${SMTP_HOST:-smtp.gmail.com}
       SMTP_PORT: ${SMTP_PORT:-587}
@@ -66,19 +71,15 @@ services:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-    healthcheck:
-      test: ['CMD-SHELL', 'node -e "require(\'http\').get(\'http://localhost:3000/api/health\', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"']
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
+    command: yarn start:dev
     networks:
-      - user-service-network
+      - user-service-network-dev
 
 networks:
-  user-service-network:
+  user-service-network-dev:
     driver: bridge
 
 volumes:
-  postgres-data:
+  postgres-data-dev:
     driver: local
+

@@ -54,20 +54,19 @@ User Service - A comprehensive authentication and business management service bu
 ## Technology Stack
 
 - **Framework**: NestJS 11
-- **Database**: MongoDB 7 with Mongoose
+- **Database**: PostgreSQL 16 with TypeORM
 - **Authentication**: JWT, Passport.js, TOTP (OTPLIB)
-- **Search**: ElasticSearch 8.11
 - **Validation**: class-validator, class-transformer
 - **Security**: bcrypt, encryption utilities, rate limiting
+- **Containerization**: Docker & Docker Compose
 
 ## Project Setup
 
 ### Prerequisites
 
-- Node.js 20+
-- MongoDB 7+
-- ElasticSearch 8.11+
-- Docker & Docker Compose (optional)
+- Node.js 20+ (or Docker & Docker Compose)
+- PostgreSQL 16+ (or use Docker Compose)
+- Docker & Docker Compose (recommended for easy setup)
 
 ### Installation
 
@@ -93,29 +92,64 @@ cp ENV.example .env
 Edit `.env` with your configuration:
 - `JWT_SECRET`: Strong secret for JWT signing
 - `ENCRYPTION_KEY`: 32-character key for API/webhook secret encryption
-- `MONGODB_URI`: MongoDB connection string
-- `ELASTICSEARCH_NODE`: ElasticSearch node URL
+- `DB_HOST`: PostgreSQL host (use `postgres` when using Docker Compose)
+- `DB_PORT`: PostgreSQL port (5432 in Docker, 5433 for local)
+- `DB_USERNAME`: PostgreSQL username
+- `DB_PASSWORD`: PostgreSQL password
+- `DB_DATABASE`: Database name
 - `RECEIPT_SERVICE_URL`: Receipt service API URL
+- `SMTP_*`: Email configuration for OTP sending
 
 4. **Start services with Docker Compose** (Recommended)
 
+**Production:**
 ```bash
 docker-compose up -d
 ```
 
+**Development (with hot reload):**
+```bash
+docker-compose -f docker-compose.dev.yml up
+```
+
 This will start:
-- MongoDB on port 27017
-- ElasticSearch on port 9200
+- PostgreSQL on port 5433 (or as configured in `.env`)
 - User Service on port 3000
+
+The production setup includes:
+- Multi-stage Docker build for optimized image size
+- Health checks for both app and database
+- Automatic restart policies
+- Isolated Docker network
+- Persistent database volume
+
+**Docker Commands:**
+
+```bash
+# Build and start services
+docker-compose up -d
+
+# View logs
+docker-compose logs -f app-user-service
+
+# Stop services
+docker-compose down
+
+# Stop and remove volumes (⚠️ deletes database data)
+docker-compose down -v
+
+# Rebuild after code changes
+docker-compose up -d --build
+
+# Access PostgreSQL directly
+docker-compose exec postgres psql -U postgres -d user-service
+```
 
 Or start services manually:
 
 ```bash
-# Start MongoDB
-mongod
-
-# Start ElasticSearch
-elasticsearch
+# Start PostgreSQL (if running locally)
+# Make sure PostgreSQL is running on the configured port
 
 # Start the application
 yarn start:dev
