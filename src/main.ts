@@ -39,7 +39,7 @@ async function bootstrap() {
   // Swagger Configuration
   const config = new DocumentBuilder()
     .setTitle('User Service API')
-    .setDescription('User authentication and business management service with MFA, company onboarding, API keys, webhooks, receipts, and logging')
+    .setDescription('User authentication and business management service with MFA, company onboarding, API keys, webhooks, receipts, Zoho Books webhooks, and logging')
     .setVersion('1.0')
     .addBearerAuth(
       {
@@ -56,7 +56,8 @@ async function bootstrap() {
     .addTag('users', 'User management')
     .addTag('companies', 'Company and business management')
     .addTag('receipts', 'Receipt viewing and management')
-    .addTag('logs', 'ElasticSearch log queries')
+    .addTag('zoho-books', 'Zoho Books per-business webhooks')
+    .addTag('logs', 'Log queries')
     .build();
 
   const document = SwaggerModule.createDocument(app, config);

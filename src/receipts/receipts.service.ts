@@ -2,12 +2,23 @@ import { Injectable, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { firstValueFrom, timeout } from 'rxjs';
 import { ConfigService } from '@nestjs/config';
+import FormData from 'form-data';
 import { SearchService } from '../logging/search.service';
 import { QueryReceiptsDto } from './dto/query-receipts.dto';
+
+export interface SubmitReceiptInput {
+  companyId: string;
+  environment: string;
+  file?: Buffer;
+  filename?: string;
+  contentType?: string;
+  metadata?: Record<string, unknown>;
+}
 
 @Injectable()
 export class ReceiptsService {
   private readonly receiptServiceUrl: string;
+  private readonly uploadPath: string;
   private readonly logger = new Logger(ReceiptsService.name);
   private readonly requestTimeout = 30000; // 30 seconds
 
@@ -19,6 +30,9 @@ export class ReceiptsService {
     this.receiptServiceUrl =
       this.configService.get<string>('RECEIPT_SERVICE_URL') ||
       'http://localhost:3001';
+    this.uploadPath =
+      this.configService.get<string>('RECEIPT_SERVICE_UPLOAD_PATH') ||
+      '/receipts';
   }
 
   async getReceipts(
@@ -412,5 +426,137 @@ export class ReceiptsService {
       page,
       limit,
     });
+  }
+
+  /**
+   * Submit a document (or structured invoice payload) to the receipt service for processing.
+   * Uses multipart when a file is present; otherwise posts JSON.
+   */
+  async submitForProcessing(input: SubmitReceiptInput): Promise<any> {
+    const {
+      companyId,
+      environment,
+      file,
+      filename = 'invoice.pdf',
+      contentType = 'application/pdf',
+      metadata = {},
+    } = input;
+
+    const url = `${this.receiptServiceUrl}${this.uploadPath.startsWith('/') ? '' : '/'}${this.uploadPath}`;
+
+    try {
+      let response;
+
+      if (file?.length) {
+        const form = new FormData();
+        form.append('file', file, {
+          filename,
+          contentType,
+        });
+        form.append('companyId', companyId);
+        form.append('environment', environment);
+        form.append('source', 'zoho_books');
+        form.append('metadata', JSON.stringify(metadata));
+
+        response = await firstValueFrom(
+          this.httpService
+            .post(url, form, {
+              headers: form.getHeaders(),
+              maxBodyLength: Infinity,
+              maxContentLength: Infinity,
+            })
+            .pipe(timeout(this.requestTimeout)),
+        );
+      } else {
+        response = await firstValueFrom(
+          this.httpService
+            .post(
+              url,
+              {
+                companyId,
+                environment,
+                source: 'zoho_books',
+                ...metadata,
+              },
+              { headers: { 'Content-Type': 'application/json' } },
+            )
+            .pipe(timeout(this.requestTimeout)),
+        );
+      }
+
+      const data = response.data?.data ?? response.data;
+
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          receiptId: data?.id || data?.receiptId,
+          eventType: 'receipt.submitted',
+          message: 'Invoice submitted to receipt service for processing',
+          level: 'info',
+          processingStage: 'submitted',
+          metadata: {
+            source: 'zoho_books',
+            filename,
+            hasFile: Boolean(file?.length),
+          },
+        });
+      } catch {
+        // non-critical
+      }
+
+      return data;
+    } catch (error: any) {
+      this.logger.error(
+        `Failed to submit receipt for company ${companyId}: ${error.message}`,
+        error.stack,
+      );
+
+      if (error.name === 'TimeoutError' || error.message?.includes('timeout')) {
+        throw new HttpException(
+          {
+            message: 'Receipt service request timed out',
+            error: 'The receipt service did not respond in time',
+            serviceUrl: this.receiptServiceUrl,
+          },
+          HttpStatus.GATEWAY_TIMEOUT,
+        );
+      }
+
+      if (
+        error.code === 'ECONNREFUSED' ||
+        error.code === 'ENOTFOUND' ||
+        error.code === 'ECONNRESET'
+      ) {
+        throw new HttpException(
+          {
+            message: 'Receipt service is unavailable',
+            error: `Cannot connect to receipt service at ${this.receiptServiceUrl}`,
+            serviceUrl: this.receiptServiceUrl,
+          },
+          HttpStatus.BAD_GATEWAY,
+        );
+      }
+
+      if (error.response) {
+        const status = error.response.status || HttpStatus.BAD_GATEWAY;
+        throw new HttpException(
+          {
+            message: 'Failed to submit receipt for processing',
+            error: error.response.data || { message: 'Unknown error' },
+            statusCode: status,
+          },
+          status >= 500 ? HttpStatus.BAD_GATEWAY : status,
+        );
+      }
+
+      throw new HttpException(
+        {
+          message: 'Failed to submit receipt for processing',
+          error: error.message || 'Unknown error occurred',
+        },
+        HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
   }
 }

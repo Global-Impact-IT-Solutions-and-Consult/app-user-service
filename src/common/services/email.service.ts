@@ -1,45 +1,37 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 
 @Injectable()
 export class EmailService {
-  private transporter: nodemailer.Transporter | null = null;
-  private isConfigured: boolean = false;
+  private readonly logger = new Logger(EmailService.name);
+  private resend: Resend | null = null;
+  private isConfigured = false;
+  private fromAddress: string;
 
   constructor(private configService: ConfigService) {
-    const smtpUser = this.configService.get<string>('SMTP_USER');
-    const smtpPass = this.configService.get<string>('SMTP_PASS');
+    const apiKey =
+      this.configService.get<string>('RESEND_API_KEY') ||
+      this.configService.get<string>('SMTP_PASS');
 
-    if (smtpUser && smtpPass) {
-      // Create transporter with actual SMTP config
-      const emailConfig = {
-        host: this.configService.get<string>('SMTP_HOST') || 'smtp.gmail.com',
-        port: parseInt(this.configService.get<string>('SMTP_PORT') || '587'),
-        secure: this.configService.get<string>('SMTP_SECURE') === 'true',
-        auth: {
-          user: smtpUser,
-          pass: smtpPass,
-        },
-      };
-      this.transporter = nodemailer.createTransport(emailConfig);
+    this.fromAddress =
+      this.configService.get<string>('RESEND_FROM') ||
+      this.configService.get<string>('SMTP_FROM') ||
+      'noreply@userservice.com';
+
+    if (apiKey) {
+      this.resend = new Resend(apiKey);
       this.isConfigured = true;
     } else {
-      console.log(
-        '[DEV MODE] SMTP not configured. OTPs will be logged to console instead of sent via email.',
+      this.logger.warn(
+        'Resend not configured. OTPs will be logged to console instead of sent via email.',
       );
-      this.isConfigured = false;
     }
   }
 
   async sendOTP(email: string, otpCode: string): Promise<void> {
-    const mailOptions = {
-      from:
-        this.configService.get<string>('SMTP_FROM') ||
-        'noreply@userservice.com',
-      to: email,
-      subject: 'Your OTP Code for User Service',
-      html: `
+    const subject = 'Your OTP Code for User Service';
+    const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">OTP Verification Code</h2>
           <p>Your One-Time Password (OTP) for authentication is:</p>
@@ -49,70 +41,73 @@ export class EmailService {
           <p>This code will expire in 10 minutes.</p>
           <p style="color: #666; font-size: 12px;">If you didn't request this code, please ignore this email.</p>
         </div>
-      `,
-      text: `Your OTP code is: ${otpCode}. This code will expire in 10 minutes.`,
-    };
+      `;
+    const text = `Your OTP code is: ${otpCode}. This code will expire in 10 minutes.`;
 
-    if (this.isConfigured && this.transporter) {
-      try {
-        await this.transporter.sendMail(mailOptions);
-        console.log(`✓ OTP sent to ${email}`);
-      } catch (error: any) {
-        // If email fails in production, log the OTP as fallback
-        console.error('Failed to send email:', error.message);
-        console.log(`\n========================================`);
-        console.log(`[FALLBACK] OTP for ${email}: ${otpCode}`);
-        console.log(`This OTP will expire in 10 minutes.`);
-        console.log(`========================================\n`);
-        // In production, you might want to throw here
-        if (this.configService.get<string>('NODE_ENV') === 'production') {
-          throw new Error(
-            `Failed to send OTP email to ${email}: ${error.message}`,
-          );
-        }
-      }
-    } else {
-      // Development mode - just log the OTP
-      console.log(`\n========================================`);
-      console.log(`[DEV MODE] OTP for ${email}: ${otpCode}`);
-      console.log(`This OTP will expire in 10 minutes.`);
-      console.log(`Configure SMTP settings in .env to actually send emails.`);
-      console.log(`========================================\n`);
-    }
+    await this.send({ to: email, subject, html, text, otpFallback: otpCode });
   }
 
   async sendWelcomeEmail(email: string, name?: string): Promise<void> {
-    const mailOptions = {
-      from:
-        this.configService.get<string>('SMTP_FROM') ||
-        'noreply@userservice.com',
-      to: email,
-      subject: 'Welcome to User Service',
-      html: `
+    const subject = 'Welcome to User Service';
+    const html = `
         <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
           <h2 style="color: #333;">Welcome${name ? `, ${name}` : ''}!</h2>
           <p>Thank you for signing up for User Service. Your account has been successfully created.</p>
           <p>You can now log in and start using our services.</p>
         </div>
-      `,
-    };
+      `;
 
-    if (this.isConfigured && this.transporter) {
-      try {
-        await this.transporter.sendMail(mailOptions);
-        console.log(`✓ Welcome email sent to ${email}`);
-      } catch (error: any) {
-        // Welcome email is not critical, just log the error
-        if (this.configService.get<string>('NODE_ENV') === 'development') {
-          console.log(
-            `[DEV MODE] Welcome email failed (non-critical): ${error.message}`,
-          );
-        } else {
-          console.error('Failed to send welcome email:', error);
-        }
+    await this.send({ to: email, subject, html, critical: false });
+  }
+
+  private async send(options: {
+    to: string;
+    subject: string;
+    html: string;
+    text?: string;
+    otpFallback?: string;
+    critical?: boolean;
+  }): Promise<void> {
+    const { to, subject, html, text, otpFallback, critical = true } = options;
+
+    if (!this.isConfigured || !this.resend) {
+      if (otpFallback) {
+        this.logger.log(
+          `[DEV MODE] OTP for ${to}: ${otpFallback} (expires in 10 minutes)`,
+        );
+      } else {
+        this.logger.log(`[DEV MODE] Email "${subject}" would be sent to ${to}`);
       }
-    } else {
-      console.log(`[DEV MODE] Welcome email would be sent to ${email}`);
+      return;
+    }
+
+    try {
+      const { error } = await this.resend.emails.send({
+        from: this.fromAddress,
+        to: [to],
+        subject,
+        html,
+        ...(text ? { text } : {}),
+      });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      this.logger.log(`Email "${subject}" sent to ${to}`);
+    } catch (error: any) {
+      this.logger.error(`Failed to send email to ${to}: ${error.message}`);
+
+      if (otpFallback) {
+        this.logger.warn(`[FALLBACK] OTP for ${to}: ${otpFallback}`);
+      }
+
+      if (
+        critical &&
+        this.configService.get<string>('NODE_ENV') === 'production'
+      ) {
+        throw new Error(`Failed to send email to ${to}: ${error.message}`);
+      }
     }
   }
 }

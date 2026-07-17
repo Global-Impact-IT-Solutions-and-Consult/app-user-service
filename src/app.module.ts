@@ -12,6 +12,7 @@ import { CompanySettingsModule } from './company-settings/company-settings.modul
 import { ReceiptsModule } from './receipts/receipts.module';
 import { LoggingModule } from './logging/logging.module';
 import { CommonModule } from './common/common.module';
+import { ZohoBooksModule } from './zoho-books/zoho-books.module';
 
 @Module({
   imports: [
@@ -54,6 +55,7 @@ import { CommonModule } from './common/common.module';
     CompanySettingsModule,
     ReceiptsModule,
     LoggingModule,
+    ZohoBooksModule,
   ],
   controllers: [AppController],
   providers: [
