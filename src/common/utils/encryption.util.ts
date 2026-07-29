@@ -1,12 +1,14 @@
 import * as crypto from 'crypto';
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || crypto.randomBytes(32).toString('hex');
 const ALGORITHM = 'aes-256-gcm';
 
 export class EncryptionUtil {
   private static getKey(): Buffer {
-    // In production, use a proper key derivation function
-    return crypto.createHash('sha256').update(ENCRYPTION_KEY).digest();
+    // Read at call time so Nest ConfigModule / dotenv can populate process.env first
+    const raw =
+      process.env.ENCRYPTION_KEY ||
+      'dev-only-change-me-32chars-min!!';
+    return crypto.createHash('sha256').update(raw).digest();
   }
 
   static encrypt(text: string): string {
@@ -38,4 +40,3 @@ export class EncryptionUtil {
     return decrypted;
   }
 }
-

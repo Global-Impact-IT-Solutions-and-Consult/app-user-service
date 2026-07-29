@@ -9,6 +9,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import axios, { AxiosInstance } from 'axios';
@@ -32,6 +33,7 @@ import {
   WriteBackInvoiceDto,
 } from './dto/import-invoice.dto';
 import { CreateZohoWebhookDto } from './dto/zoho-webhook.dto';
+import { SyncZohoInvoicesDto } from './dto/sync-invoices.dto';
 import { ReceiptsService } from '../receipts/receipts.service';
 
 @Injectable()
@@ -165,6 +167,9 @@ export class ZohoBooksService {
     connection.apiDomain = apiDomain;
     connection.accountsDomain = accountsDomain;
     connection.isActive = true;
+    connection.pollingEnabled = true;
+    connection.environment =
+      this.configService.get<string>('ZOHO_DEFAULT_ENVIRONMENT') || 'test';
 
     // Pick organization: env override or first org from Zoho
     const configuredOrgId = this.configService.get<string>(
@@ -205,12 +210,136 @@ export class ZohoBooksService {
             apiDomain: connection.apiDomain,
             expiresAt: connection.expiresAt,
             connectedAt: connection.createdAt,
+            lastSyncedAt: connection.lastSyncedAt,
+            pollingEnabled: connection.pollingEnabled,
+            environment: connection.environment,
           }
         : { connected: false },
       webhook: webhook
         ? this.toWebhookStatusResponse(webhook)
         : { configured: false, status: 'not_configured' },
     };
+  }
+
+  /**
+   * Cron: every 10 minutes, poll Zoho for invoices modified since lastSyncedAt
+   * for every active OAuth connection with polling enabled.
+   */
+  @Cron(CronExpression.EVERY_10_MINUTES)
+  async pollAllConnectedCompanies() {
+    const enabled =
+      this.configService.get<string>('ZOHO_POLLING_ENABLED') !== 'false';
+    if (!enabled) {
+      return;
+    }
+
+    const connections = await this.zohoConnectionRepository.find({
+      where: { isActive: true, pollingEnabled: true },
+    });
+
+    for (const connection of connections) {
+      try {
+        await this.syncInvoices(connection.companyId, {});
+      } catch (error: any) {
+        this.logger.error(
+          `Zoho poll failed for company ${connection.companyId}: ${error.message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Pull invoices modified since lastSyncedAt (or override), import new ones as jobs.
+   */
+  async syncInvoices(companyId: string, dto: SyncZohoInvoicesDto = {}) {
+    const connection = await this.requireConnection(companyId);
+    const client = await this.getAuthedClient(companyId);
+
+    const sinceDate =
+      (dto.since && new Date(dto.since)) ||
+      connection.lastSyncedAt ||
+      new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    if (Number.isNaN(sinceDate.getTime())) {
+      throw new BadRequestException('Invalid since timestamp');
+    }
+
+    const sinceParam = this.formatZohoDateTime(sinceDate);
+    const invoices: any[] = [];
+    let page = 1;
+    const perPage = 50;
+
+    while (page <= 10) {
+      const { data } = await client.get('/books/v3/invoices', {
+        params: {
+          organization_id: connection.organizationId,
+          last_modified_time: sinceParam,
+          page,
+          per_page: perPage,
+          sort_column: 'last_modified_time',
+          sort_order: 'A',
+        },
+      });
+
+      const batch = data?.invoices || [];
+      invoices.push(...batch);
+
+      const hasMore = data?.page_context?.has_more_page === true;
+      if (!hasMore || !batch.length) {
+        break;
+      }
+      page += 1;
+    }
+
+    const imported: Array<Record<string, unknown>> = [];
+    const skipped: string[] = [];
+
+    for (const invoice of invoices) {
+      const invoiceId = String(invoice.invoice_id || '');
+      if (!invoiceId) {
+        continue;
+      }
+
+      const existing = await this.zohoInvoiceJobRepository.find({
+        where: { companyId, zohoInvoiceId: invoiceId },
+        order: { createdAt: 'DESC' },
+        take: 1,
+      });
+      const job = existing[0];
+      if (job && job.status !== ZohoInvoiceJobStatus.FAILED) {
+        skipped.push(invoiceId);
+        continue;
+      }
+
+      const result = await this.importAndProcessInvoice(
+        companyId,
+        invoiceId,
+        connection.environment || 'test',
+        {
+          submitForProcessing: dto.submitForProcessing !== false,
+          environment: connection.environment || 'test',
+        },
+      );
+      imported.push(result as Record<string, unknown>);
+    }
+
+    connection.lastSyncedAt = new Date();
+    await this.zohoConnectionRepository.save(connection);
+
+    return {
+      since: sinceParam,
+      fetched: invoices.length,
+      imported: imported.length,
+      skipped: skipped.length,
+      lastSyncedAt: connection.lastSyncedAt,
+      jobs: imported,
+    };
+  }
+
+  private formatZohoDateTime(date: Date): string {
+    // Zoho expects e.g. 2024-01-15T10:30:00+0000
+    const iso = date.toISOString(); // 2024-01-15T10:30:00.000Z
+    return iso.replace(/\.\d{3}Z$/, '+0000');
   }
 
   /**
@@ -434,6 +563,7 @@ export class ZohoBooksService {
   async disconnect(companyId: string): Promise<{ message: string }> {
     const connection = await this.requireConnection(companyId);
     connection.isActive = false;
+    connection.pollingEnabled = false;
     await this.zohoConnectionRepository.save(connection);
     return { message: 'Zoho Books disconnected' };
   }

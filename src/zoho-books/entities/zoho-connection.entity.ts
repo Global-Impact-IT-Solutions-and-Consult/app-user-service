@@ -50,6 +50,18 @@ export class ZohoConnection {
   @Column({ nullable: true })
   zohoContactId: string;
 
+  /** Cursor for OAuth poll sync (invoices modified after this) */
+  @Column({ type: 'timestamp', nullable: true })
+  lastSyncedAt: Date | null;
+
+  /** When true, cron poller pulls new/updated invoices */
+  @Column({ default: true })
+  pollingEnabled: boolean;
+
+  /** Environment forwarded to receipt service on poll import */
+  @Column({ default: 'test' })
+  environment: string;
+
   @Column({ default: true })
   isActive: boolean;
 
