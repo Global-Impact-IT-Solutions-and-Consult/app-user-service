@@ -221,6 +221,35 @@ export class ZohoBooksService {
     };
   }
 
+  /** OAuth-only status for the primary frontend integration (matches QuickBooks shape). */
+  async getOauthStatus(companyId: string) {
+    const connection = await this.zohoConnectionRepository.findOne({
+      where: { companyId, isActive: true },
+    });
+
+    if (!connection) {
+      return {
+        connected: false,
+        configured: this.isConfigured(),
+        message: this.isConfigured()
+          ? 'Not connected. Start OAuth via GET /zoho-books/:companyId/connect'
+          : 'Zoho Books is not configured. Set ZOHO_CLIENT_ID and ZOHO_CLIENT_SECRET.',
+      };
+    }
+
+    return {
+      connected: true,
+      configured: true,
+      organizationId: connection.organizationId,
+      apiDomain: connection.apiDomain,
+      lastSyncedAt: connection.lastSyncedAt,
+      pollingEnabled: connection.pollingEnabled,
+      environment: connection.environment,
+      expiresAt: connection.expiresAt,
+      connectedAt: connection.createdAt,
+    };
+  }
+
   /**
    * Cron: every 10 minutes, poll Zoho for invoices modified since lastSyncedAt
    * for every active OAuth connection with polling enabled.

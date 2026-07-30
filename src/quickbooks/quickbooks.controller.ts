@@ -12,66 +12,62 @@ import {
 import {
   ApiTags,
   ApiOperation,
+  ApiResponse,
   ApiBearerAuth,
   ApiParam,
   ApiQuery,
   ApiBody,
 } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { ZohoBooksService } from './zoho-books.service';
-import { ImportInvoiceDto } from './dto/import-invoice.dto';
-import { SyncZohoInvoicesDto } from './dto/sync-invoices.dto';
+import { QuickBooksService } from './quickbooks.service';
+import { SyncQuickBooksInvoicesDto } from './dto/sync-invoices.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
   CurrentUserPayload,
 } from '../common/decorators/current-user.decorator';
 
-/**
- * Zoho Books OAuth + poll (primary frontend integration).
- * Same shape as QuickBooks: connect → sync/cron → jobs.
- */
-@ApiTags('zoho-books')
-@Controller('zoho-books')
-export class ZohoBooksController {
-  constructor(private zohoBooksService: ZohoBooksService) {}
+@ApiTags('quickbooks')
+@Controller('quickbooks')
+export class QuickBooksController {
+  constructor(private quickBooksService: QuickBooksService) {}
 
   @Get('callback')
   @ApiOperation({
-    summary: 'OAuth callback from Zoho (public). Exchanges code for tokens.',
+    summary:
+      'OAuth callback from Intuit (public). Exchanges code for tokens; realmId is the QBO company.',
   })
   @ApiQuery({ name: 'code', required: true })
   @ApiQuery({ name: 'state', required: true, description: 'companyId' })
-  @ApiQuery({ name: 'accounts-server', required: false })
-  async oauthCallback(
+  @ApiQuery({ name: 'realmId', required: true })
+  @ApiResponse({ status: 200, description: 'Connected' })
+  async callback(
     @Query('code') code: string,
     @Query('state') state: string,
-    @Query('accounts-server') accountsServer: string | undefined,
+    @Query('realmId') realmId: string,
     @Res() res: Response,
   ) {
-    const connection = await this.zohoBooksService.handleOAuthCallback(
+    const connection = await this.quickBooksService.handleOAuthCallback(
       code,
       state,
-      accountsServer,
+      realmId,
     );
-    const successRedirect = process.env.ZOHO_SUCCESS_REDIRECT_URL || undefined;
 
+    const successRedirect = process.env.QUICKBOOKS_SUCCESS_REDIRECT_URL;
     if (successRedirect) {
       const url = new URL(successRedirect);
-      url.searchParams.set('zoho', 'connected');
+      url.searchParams.set('quickbooks', 'connected');
       url.searchParams.set('companyId', state);
-      if (connection.organizationId) {
-        url.searchParams.set('organizationId', connection.organizationId);
-      }
+      url.searchParams.set('realmId', connection.realmId);
       return res.redirect(url.toString());
     }
 
     return res.json({
       connected: true,
       companyId: state,
-      organizationId: connection.organizationId,
+      realmId: connection.realmId,
       message:
-        'Zoho Books connected. Call POST /zoho-books/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
+        'QuickBooks connected. Call POST /quickbooks/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
     });
   }
 
@@ -80,41 +76,41 @@ export class ZohoBooksController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
-      'Get Zoho Books OAuth URL for this company (open in browser to authorize)',
+      'Get QuickBooks Online OAuth URL for this company (open in browser to authorize)',
   })
   @ApiParam({ name: 'companyId' })
   async connect(
     @Param('companyId') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.getAuthorizationUrl(companyId);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.getAuthorizationUrl(companyId);
   }
 
   @Get(':companyId/status')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Zoho OAuth connection / sync status' })
+  @ApiOperation({ summary: 'QuickBooks connection / sync status' })
   @ApiParam({ name: 'companyId' })
   async status(
     @Param('companyId') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.getOauthStatus(companyId);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.getConnectionStatus(companyId);
   }
 
   @Delete(':companyId/connection')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Disconnect Zoho OAuth for this company' })
+  @ApiOperation({ summary: 'Disconnect QuickBooks for this company' })
   @ApiParam({ name: 'companyId' })
   async disconnect(
     @Param('companyId') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.disconnect(companyId);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.disconnect(companyId);
   }
 
   @Post(':companyId/sync')
@@ -122,44 +118,38 @@ export class ZohoBooksController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
-      'Manually poll Zoho for invoices modified since lastSyncedAt (also runs every 10 minutes)',
+      'Manually poll QuickBooks invoices updated since lastSyncedAt (also runs every 10 minutes)',
   })
   @ApiParam({ name: 'companyId' })
-  @ApiBody({ type: SyncZohoInvoicesDto, required: false })
+  @ApiBody({ type: SyncQuickBooksInvoicesDto, required: false })
   async sync(
     @Param('companyId') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
-    @Body() dto: SyncZohoInvoicesDto,
+    @Body() dto: SyncQuickBooksInvoicesDto,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.syncInvoices(companyId, dto || {});
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.syncInvoices(companyId, dto || {});
   }
 
   @Get(':companyId/invoices')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'List invoices from Zoho Books (OAuth)' })
+  @ApiOperation({ summary: 'List recent QuickBooks invoices' })
   @ApiParam({ name: 'companyId' })
-  @ApiQuery({ name: 'page', required: false })
-  @ApiQuery({ name: 'perPage', required: false })
+  @ApiQuery({ name: 'maxResults', required: false })
   async listInvoices(
     @Param('companyId') companyId: string,
     @CurrentUser() user: CurrentUserPayload,
-    @Query('page') page?: number,
-    @Query('perPage') perPage?: number,
+    @Query('maxResults') maxResults?: number,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.listInvoices(
-      companyId,
-      page || 1,
-      perPage || 25,
-    );
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.listInvoices(companyId, maxResults || 25);
   }
 
   @Get(':companyId/invoices/:invoiceId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'Get one Zoho Books invoice by ID' })
+  @ApiOperation({ summary: 'Get one QuickBooks invoice by ID' })
   @ApiParam({ name: 'companyId' })
   @ApiParam({ name: 'invoiceId' })
   async getInvoice(
@@ -167,8 +157,8 @@ export class ZohoBooksController {
     @Param('invoiceId') invoiceId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.getInvoice(companyId, invoiceId);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.getInvoice(companyId, invoiceId);
   }
 
   @Post(':companyId/invoices/:invoiceId/import')
@@ -176,30 +166,23 @@ export class ZohoBooksController {
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
     summary:
-      'Pull one invoice (+ PDF) from Zoho and submit to the receipt service',
+      'Pull one invoice (+ PDF) from QuickBooks and submit to the receipt service',
   })
   @ApiParam({ name: 'companyId' })
   @ApiParam({ name: 'invoiceId' })
-  @ApiBody({ type: ImportInvoiceDto, required: false })
   async importInvoice(
     @Param('companyId') companyId: string,
     @Param('invoiceId') invoiceId: string,
     @CurrentUser() user: CurrentUserPayload,
-    @Body() dto: ImportInvoiceDto,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.importAndProcessInvoice(
-      companyId,
-      invoiceId,
-      user.environment || 'test',
-      dto || {},
-    );
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.importAndProcessInvoice(companyId, invoiceId);
   }
 
   @Get(':companyId/jobs')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
-  @ApiOperation({ summary: 'List Zoho invoice processing jobs' })
+  @ApiOperation({ summary: 'List QuickBooks invoice processing jobs' })
   @ApiParam({ name: 'companyId' })
   @ApiQuery({ name: 'page', required: false })
   @ApiQuery({ name: 'perPage', required: false })
@@ -209,15 +192,19 @@ export class ZohoBooksController {
     @Query('page') page?: number,
     @Query('perPage') perPage?: number,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.listJobs(companyId, page || 1, perPage || 25);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.listJobs(
+      companyId,
+      page || 1,
+      perPage || 25,
+    );
   }
 
   @Get(':companyId/jobs/:jobId')
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth('JWT-auth')
   @ApiOperation({
-    summary: 'Get one Zoho invoice job (refreshes receipt processing status)',
+    summary: 'Get one QuickBooks job (refreshes receipt processing status)',
   })
   @ApiParam({ name: 'companyId' })
   @ApiParam({ name: 'jobId' })
@@ -226,7 +213,7 @@ export class ZohoBooksController {
     @Param('jobId') jobId: string,
     @CurrentUser() user: CurrentUserPayload,
   ) {
-    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
-    return this.zohoBooksService.getJob(companyId, jobId);
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.getJob(companyId, jobId);
   }
 }

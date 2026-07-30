@@ -138,15 +138,17 @@ export class AuthService {
 
     const tempToken = await this.generateTempToken(user.id);
 
-    // Log userId and tempToken for debugging (same format as OTP logging)
+    // Log userId, OTP, and tempToken for local debugging
     console.log(`\n========================================`);
     console.log(`[LOGIN] User ID: ${user.id}`);
     console.log(`[LOGIN] Email: ${user.email}`);
+    console.log(`[LOGIN] OTP Code: ${otpCode}`);
     console.log(`[LOGIN] Temp Token: ${tempToken}`);
     console.log(`========================================\n`);
 
     const response: any = {
       requiresMfa: true,
+      userId: user.id,
       message: user.totpEnabled
         ? 'Use your authenticator app or check your email for OTP'
         : 'OTP sent to your email',

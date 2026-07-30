@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { ZohoBooksController } from './zoho-books.controller';
+import { ZohoBooksWebhookController } from './zoho-books-webhook.controller';
 import { ZohoBooksService } from './zoho-books.service';
 import { ZohoConnection } from './entities/zoho-connection.entity';
 import { ZohoInvoiceJob } from './entities/zoho-invoice-job.entity';
@@ -18,7 +19,7 @@ import { ReceiptsModule } from '../receipts/receipts.module';
     ]),
     ReceiptsModule,
   ],
-  controllers: [ZohoBooksController],
+  controllers: [ZohoBooksController, ZohoBooksWebhookController],
   providers: [ZohoBooksService],
   exports: [ZohoBooksService],
 })

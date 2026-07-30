@@ -14,6 +14,7 @@ import { ReceiptsModule } from './receipts/receipts.module';
 import { LoggingModule } from './logging/logging.module';
 import { CommonModule } from './common/common.module';
 import { ZohoBooksModule } from './zoho-books/zoho-books.module';
+import { QuickBooksModule } from './quickbooks/quickbooks.module';
 
 @Module({
   imports: [
@@ -58,6 +59,7 @@ import { ZohoBooksModule } from './zoho-books/zoho-books.module';
     ReceiptsModule,
     LoggingModule,
     ZohoBooksModule,
+    QuickBooksModule,
   ],
   controllers: [AppController],
   providers: [
