@@ -8,6 +8,8 @@ import {
   Query,
   UseGuards,
   Res,
+  HttpException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -34,6 +36,8 @@ import {
 @ApiTags('zoho-books')
 @Controller('zoho-books')
 export class ZohoBooksController {
+  private readonly logger = new Logger(ZohoBooksController.name);
+
   constructor(private zohoBooksService: ZohoBooksService) {}
 
   @Get('callback')
@@ -49,30 +53,72 @@ export class ZohoBooksController {
     @Query('accounts-server') accountsServer: string | undefined,
     @Res() res: Response,
   ) {
-    const connection = await this.zohoBooksService.handleOAuthCallback(
-      code,
-      state,
-      accountsServer,
-    );
     const successRedirect = process.env.ZOHO_SUCCESS_REDIRECT_URL || undefined;
 
-    if (successRedirect) {
-      const url = new URL(successRedirect);
-      url.searchParams.set('zoho', 'connected');
-      url.searchParams.set('companyId', state);
-      if (connection.organizationId) {
-        url.searchParams.set('organizationId', connection.organizationId);
-      }
-      return res.redirect(url.toString());
-    }
+    try {
+      const connection = await this.zohoBooksService.handleOAuthCallback(
+        code,
+        state,
+        accountsServer,
+      );
 
-    return res.json({
-      connected: true,
-      companyId: state,
-      organizationId: connection.organizationId,
-      message:
-        'Zoho Books connected. Call POST /zoho-books/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
-    });
+      if (successRedirect) {
+        const url = new URL(successRedirect);
+        url.searchParams.set('zoho', 'connected');
+        url.searchParams.set('companyId', state);
+        if (connection.organizationId) {
+          url.searchParams.set('organizationId', connection.organizationId);
+        }
+        return res.redirect(url.toString());
+      }
+
+      return res.json({
+        connected: true,
+        companyId: state,
+        organizationId: connection.organizationId,
+        message:
+          'Zoho Books connected. Call POST /zoho-books/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
+      });
+    } catch (error) {
+      const message = this.extractErrorMessage(error);
+
+      this.logger.error(
+        `Zoho OAuth callback failed for company ${state}: ${message}`,
+      );
+
+      if (successRedirect) {
+        const url = new URL(successRedirect);
+        url.searchParams.set('zoho', 'error');
+        url.searchParams.set('companyId', state);
+        url.searchParams.set('message', message);
+        return res.redirect(url.toString());
+      }
+
+      const status = error instanceof HttpException ? error.getStatus() : 500;
+      return res.status(status).json({
+        connected: false,
+        companyId: state,
+        message,
+      });
+    }
+  }
+
+  private extractErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (
+        typeof response === 'object' &&
+        response !== null &&
+        'message' in response
+      ) {
+        const responseMessage = (response as { message?: unknown }).message;
+        if (typeof responseMessage === 'string') return responseMessage;
+        if (Array.isArray(responseMessage)) return responseMessage.join(', ');
+      }
+      return error.message;
+    }
+    if (error instanceof Error) return error.message;
+    return 'Failed to connect Zoho Books';
   }
 
   @Get(':companyId/connect')
