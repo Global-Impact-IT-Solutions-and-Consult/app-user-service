@@ -688,6 +688,13 @@ export class QuickBooksService {
       this.logger.error(
         `QuickBooks token refresh failed: ${JSON.stringify(error.response?.data) || error.message}`,
       );
+
+      if (error.response?.data?.error === 'invalid_grant') {
+        connection.isActive = false;
+        connection.pollingEnabled = false;
+        await this.quickBooksConnectionRepository.save(connection);
+      }
+
       throw new ServiceUnavailableException(
         'QuickBooks session expired. Reconnect via GET /quickbooks/:companyId/connect',
       );

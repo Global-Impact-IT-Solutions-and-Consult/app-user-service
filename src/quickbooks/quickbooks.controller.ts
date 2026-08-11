@@ -8,6 +8,8 @@ import {
   Query,
   UseGuards,
   Res,
+  HttpException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,6 +32,8 @@ import {
 @ApiTags('quickbooks')
 @Controller('quickbooks')
 export class QuickBooksController {
+  private readonly logger = new Logger(QuickBooksController.name);
+
   constructor(private quickBooksService: QuickBooksService) {}
 
   @Get('callback')
@@ -47,28 +51,70 @@ export class QuickBooksController {
     @Query('realmId') realmId: string,
     @Res() res: Response,
   ) {
-    const connection = await this.quickBooksService.handleOAuthCallback(
-      code,
-      state,
-      realmId,
-    );
-
     const successRedirect = process.env.QUICKBOOKS_SUCCESS_REDIRECT_URL;
-    if (successRedirect) {
-      const url = new URL(successRedirect);
-      url.searchParams.set('quickbooks', 'connected');
-      url.searchParams.set('companyId', state);
-      url.searchParams.set('realmId', connection.realmId);
-      return res.redirect(url.toString());
-    }
 
-    return res.json({
-      connected: true,
-      companyId: state,
-      realmId: connection.realmId,
-      message:
-        'QuickBooks connected. Call POST /quickbooks/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
-    });
+    try {
+      const connection = await this.quickBooksService.handleOAuthCallback(
+        code,
+        state,
+        realmId,
+      );
+
+      if (successRedirect) {
+        const url = new URL(successRedirect);
+        url.searchParams.set('quickbooks', 'connected');
+        url.searchParams.set('companyId', state);
+        url.searchParams.set('realmId', connection.realmId);
+        return res.redirect(url.toString());
+      }
+
+      return res.json({
+        connected: true,
+        companyId: state,
+        realmId: connection.realmId,
+        message:
+          'QuickBooks connected. Call POST /quickbooks/:companyId/sync (or wait for the 10-min poller) to pull invoices.',
+      });
+    } catch (error) {
+      const message = this.extractErrorMessage(error);
+
+      this.logger.error(
+        `QuickBooks OAuth callback failed for company ${state}: ${message}`,
+      );
+
+      if (successRedirect) {
+        const url = new URL(successRedirect);
+        url.searchParams.set('quickbooks', 'error');
+        url.searchParams.set('companyId', state);
+        url.searchParams.set('message', message);
+        return res.redirect(url.toString());
+      }
+
+      const status = error instanceof HttpException ? error.getStatus() : 500;
+      return res.status(status).json({
+        connected: false,
+        companyId: state,
+        message,
+      });
+    }
+  }
+
+  private extractErrorMessage(error: unknown): string {
+    if (error instanceof HttpException) {
+      const response = error.getResponse();
+      if (
+        typeof response === 'object' &&
+        response !== null &&
+        'message' in response
+      ) {
+        const responseMessage = (response as { message?: unknown }).message;
+        if (typeof responseMessage === 'string') return responseMessage;
+        if (Array.isArray(responseMessage)) return responseMessage.join(', ');
+      }
+      return error.message;
+    }
+    if (error instanceof Error) return error.message;
+    return 'Failed to connect QuickBooks';
   }
 
   @Get(':companyId/connect')
