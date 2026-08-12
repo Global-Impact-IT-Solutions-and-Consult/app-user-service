@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -23,6 +24,7 @@ import {
 import type { Response } from 'express';
 import { QuickBooksService } from './quickbooks.service';
 import { SyncQuickBooksInvoicesDto } from './dto/sync-invoices.dto';
+import { UpdateQuickBooksPollingDto } from './dto/update-polling.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
@@ -157,6 +159,24 @@ export class QuickBooksController {
   ) {
     await this.quickBooksService.assertCompanyMember(companyId, user.userId);
     return this.quickBooksService.disconnect(companyId);
+  }
+
+  @Patch(':companyId/polling')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Enable or disable scheduled QuickBooks invoice polling' })
+  @ApiParam({ name: 'companyId' })
+  @ApiBody({ type: UpdateQuickBooksPollingDto })
+  async updatePolling(
+    @Param('companyId') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: UpdateQuickBooksPollingDto,
+  ) {
+    await this.quickBooksService.assertCompanyMember(companyId, user.userId);
+    return this.quickBooksService.updatePolling(
+      companyId,
+      dto.pollingEnabled,
+    );
   }
 
   @Post(':companyId/sync')

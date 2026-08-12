@@ -205,6 +205,16 @@ export class QuickBooksService {
     return { message: 'QuickBooks disconnected' };
   }
 
+  async updatePolling(
+    companyId: string,
+    pollingEnabled: boolean,
+  ): Promise<{ pollingEnabled: boolean }> {
+    const connection = await this.requireConnection(companyId);
+    connection.pollingEnabled = pollingEnabled;
+    await this.quickBooksConnectionRepository.save(connection);
+    return { pollingEnabled: connection.pollingEnabled };
+  }
+
   @Cron(CronExpression.EVERY_10_MINUTES)
   async pollAllConnectedCompanies() {
     const enabled =

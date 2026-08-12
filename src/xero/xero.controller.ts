@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Put,
+  Patch,
   Delete,
   Body,
   Param,
@@ -27,6 +28,7 @@ import {
   SetXeroTenantDto,
   SyncXeroInvoicesDto,
 } from './dto/sync-invoices.dto';
+import { UpdateXeroPollingDto } from './dto/update-polling.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
@@ -161,6 +163,21 @@ export class XeroController {
   ) {
     await this.xeroService.assertCompanyMember(companyId, user.userId);
     return this.xeroService.disconnect(companyId);
+  }
+
+  @Patch(':companyId/polling')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Enable or disable scheduled Xero invoice polling' })
+  @ApiParam({ name: 'companyId' })
+  @ApiBody({ type: UpdateXeroPollingDto })
+  async updatePolling(
+    @Param('companyId') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: UpdateXeroPollingDto,
+  ) {
+    await this.xeroService.assertCompanyMember(companyId, user.userId);
+    return this.xeroService.updatePolling(companyId, dto.pollingEnabled);
   }
 
   @Get(':companyId/tenants')

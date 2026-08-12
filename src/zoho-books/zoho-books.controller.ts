@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Delete,
   Body,
   Param,
@@ -23,6 +24,7 @@ import type { Response } from 'express';
 import { ZohoBooksService } from './zoho-books.service';
 import { ImportInvoiceDto } from './dto/import-invoice.dto';
 import { SyncZohoInvoicesDto } from './dto/sync-invoices.dto';
+import { UpdateZohoPollingDto } from './dto/update-polling.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
@@ -161,6 +163,24 @@ export class ZohoBooksController {
   ) {
     await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
     return this.zohoBooksService.disconnect(companyId);
+  }
+
+  @Patch(':companyId/polling')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth('JWT-auth')
+  @ApiOperation({ summary: 'Enable or disable scheduled Zoho Books invoice polling' })
+  @ApiParam({ name: 'companyId' })
+  @ApiBody({ type: UpdateZohoPollingDto })
+  async updatePolling(
+    @Param('companyId') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: UpdateZohoPollingDto,
+  ) {
+    await this.zohoBooksService.assertCompanyMember(companyId, user.userId);
+    return this.zohoBooksService.updatePolling(
+      companyId,
+      dto.pollingEnabled,
+    );
   }
 
   @Post(':companyId/sync')

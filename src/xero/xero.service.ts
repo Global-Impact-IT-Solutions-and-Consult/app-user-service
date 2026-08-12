@@ -71,7 +71,7 @@ export class XeroService {
   private getRedirectUri(): string {
     return (
       this.configService.get<string>('XERO_REDIRECT_URI') ||
-      'http://localhost:3000/api/xero/callback'
+      'http://localhost:4002/api/xero/callback'
     );
   }
 
@@ -221,6 +221,16 @@ export class XeroService {
     connection.pollingEnabled = false;
     await this.xeroConnectionRepository.save(connection);
     return { message: 'Xero disconnected' };
+  }
+
+  async updatePolling(
+    companyId: string,
+    pollingEnabled: boolean,
+  ): Promise<{ pollingEnabled: boolean }> {
+    const connection = await this.requireConnection(companyId);
+    connection.pollingEnabled = pollingEnabled;
+    await this.xeroConnectionRepository.save(connection);
+    return { pollingEnabled: connection.pollingEnabled };
   }
 
   async listTenants(companyId: string) {
@@ -746,6 +756,11 @@ export class XeroService {
       this.logger.error(
         `Xero token refresh failed: ${JSON.stringify(error.response?.data) || error.message}`,
       );
+      if (error.response?.data?.error === 'invalid_grant') {
+        connection.isActive = false;
+        connection.pollingEnabled = false;
+        await this.xeroConnectionRepository.save(connection);
+      }
       throw new ServiceUnavailableException(
         'Xero session expired. Reconnect via GET /xero/:companyId/connect',
       );

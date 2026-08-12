@@ -597,6 +597,16 @@ export class ZohoBooksService {
     return { message: 'Zoho Books disconnected' };
   }
 
+  async updatePolling(
+    companyId: string,
+    pollingEnabled: boolean,
+  ): Promise<{ pollingEnabled: boolean }> {
+    const connection = await this.requireConnection(companyId);
+    connection.pollingEnabled = pollingEnabled;
+    await this.zohoConnectionRepository.save(connection);
+    return { pollingEnabled: connection.pollingEnabled };
+  }
+
   async listOrganizations(companyId: string) {
     const client = await this.getAuthedClient(companyId);
     const connection = await this.requireConnection(companyId);
