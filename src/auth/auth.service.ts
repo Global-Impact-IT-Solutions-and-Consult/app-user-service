@@ -60,11 +60,31 @@ export class AuthService {
     const user = await this.usersService.findByEmail(loginDto.email);
 
     if (!user) {
+      await this.loggingService.safeCreateLog({
+        companyId: 'system',
+        environment: 'test',
+        eventType: 'user.login.failed',
+        message: 'Login failed: unknown email',
+        level: 'warning',
+        metadata: { reason: 'unknown_email', email: loginDto.email },
+      });
       throw new UnauthorizedException('Invalid credentials');
     }
 
     // Check if account is locked
     if (user.lockedUntil && user.lockedUntil > new Date()) {
+      await this.loggingService.safeCreateLog({
+        companyId: user.currentCompanyId || 'system',
+        environment: user.currentEnvironment || 'test',
+        eventType: 'user.login.failed',
+        message: 'Login failed: account locked',
+        level: 'warning',
+        metadata: {
+          userId: user.id,
+          email: user.email,
+          reason: 'account_locked',
+        },
+      });
       throw new UnauthorizedException(
         'Account is temporarily locked. Please try again later.',
       );
@@ -172,6 +192,14 @@ export class AuthService {
     });
 
     if (!user) {
+      await this.loggingService.safeCreateLog({
+        companyId: 'system',
+        environment: 'test',
+        eventType: 'user.mfa.failed',
+        message: 'MFA failed: invalid session',
+        level: 'warning',
+        metadata: { reason: 'invalid_session', userId: mfaVerifyDto.userId },
+      });
       throw new UnauthorizedException('Invalid MFA session');
     }
 
@@ -194,12 +222,14 @@ export class AuthService {
     if (!isVerified) {
       // Check if OTP exists and is not expired
       if (!user.otpCode || !user.otpExpiresAt) {
+        await this.logMfaFailure(user, 'no_otp');
         throw new UnauthorizedException(
           'No OTP found. Please request a new one.',
         );
       }
 
       if (OtpGeneratorUtil.isOTPExpired(user.otpExpiresAt)) {
+        await this.logMfaFailure(user, 'otp_expired');
         throw new UnauthorizedException(
           'OTP has expired. Please request a new one.',
         );
@@ -207,6 +237,7 @@ export class AuthService {
 
       // Verify OTP code
       if (user.otpCode !== mfaVerifyDto.code) {
+        await this.logMfaFailure(user, 'invalid_code');
         throw new UnauthorizedException('Invalid OTP code');
       }
 
@@ -214,6 +245,7 @@ export class AuthService {
     }
 
     if (!isVerified) {
+      await this.logMfaFailure(user, 'invalid_code');
       throw new UnauthorizedException('Invalid verification code');
     }
 
@@ -546,6 +578,17 @@ export class AuthService {
     }
   }
 
+  private async logMfaFailure(user: User, reason: string) {
+    await this.loggingService.safeCreateLog({
+      companyId: user.currentCompanyId || 'system',
+      environment: user.currentEnvironment || 'test',
+      eventType: 'user.mfa.failed',
+      message: `MFA failed: ${reason}`,
+      level: 'warning',
+      metadata: { userId: user.id, email: user.email, reason },
+    });
+  }
+
   private async handleFailedLogin(user: User) {
     const failedAttempts = (user.failedLoginAttempts || 0) + 1;
     const updateData: any = {
@@ -558,6 +601,24 @@ export class AuthService {
     }
 
     await this.userRepository.update(user.id, updateData);
+
+    await this.loggingService.safeCreateLog({
+      companyId: user.currentCompanyId || 'system',
+      environment: user.currentEnvironment || 'test',
+      eventType: 'user.login.failed',
+      message:
+        failedAttempts >= 5
+          ? 'Login failed: invalid password; account locked'
+          : 'Login failed: invalid password',
+      level: 'warning',
+      metadata: {
+        userId: user.id,
+        email: user.email,
+        reason: 'invalid_password',
+        failedAttempts,
+        locked: failedAttempts >= 5,
+      },
+    });
   }
 
   /**

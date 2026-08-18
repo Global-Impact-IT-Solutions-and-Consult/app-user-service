@@ -20,6 +20,7 @@ import {
 import { Company } from '../companies/entities/company.entity';
 import { EncryptionUtil } from '../common/utils/encryption.util';
 import { ReceiptsService } from '../receipts/receipts.service';
+import { LoggingService } from '../logging/logging.service';
 import { SyncQuickBooksInvoicesDto } from './dto/sync-invoices.dto';
 
 @Injectable()
@@ -35,6 +36,7 @@ export class QuickBooksService {
     private companyRepository: Repository<Company>,
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
+    private loggingService: LoggingService,
   ) {}
 
   isConfigured(): boolean {
@@ -166,7 +168,17 @@ export class QuickBooksService {
       this.configService.get<string>('QUICKBOOKS_DEFAULT_ENVIRONMENT') ||
       'test';
 
-    return this.quickBooksConnectionRepository.save(connection);
+    const saved = await this.quickBooksConnectionRepository.save(connection);
+    await this.logErpEvent(
+      companyId,
+      'quickbooks.connected',
+      'QuickBooks connected',
+      {
+        environment: saved.environment || 'test',
+        metadata: { realmId: saved.realmId },
+      },
+    );
+    return saved;
   }
 
   async getConnectionStatus(companyId: string) {
@@ -202,6 +214,12 @@ export class QuickBooksService {
     connection.isActive = false;
     connection.pollingEnabled = false;
     await this.quickBooksConnectionRepository.save(connection);
+    await this.logErpEvent(
+      companyId,
+      'quickbooks.disconnected',
+      'QuickBooks disconnected',
+      { environment: connection.environment || 'test' },
+    );
     return { message: 'QuickBooks disconnected' };
   }
 
@@ -229,10 +247,20 @@ export class QuickBooksService {
 
     for (const connection of connections) {
       try {
-        await this.syncInvoices(connection.companyId, {});
+        await this.syncInvoices(connection.companyId, {}, 'poll');
       } catch (error: any) {
         this.logger.error(
           `QuickBooks poll failed for company ${connection.companyId}: ${error.message}`,
+        );
+        await this.logErpEvent(
+          connection.companyId,
+          'quickbooks.sync.failed',
+          `QuickBooks poll failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger: 'poll', error: error.message },
+          },
         );
       }
     }
@@ -241,8 +269,14 @@ export class QuickBooksService {
   /**
    * Poll Invoice entities updated since lastSyncedAt via QBO query language.
    */
-  async syncInvoices(companyId: string, dto: SyncQuickBooksInvoicesDto = {}) {
+  async syncInvoices(
+    companyId: string,
+    dto: SyncQuickBooksInvoicesDto = {},
+    trigger: 'manual' | 'poll' = 'manual',
+  ) {
     const connection = await this.requireConnection(companyId);
+
+    try {
     const client = await this.getAuthedClient(companyId);
 
     const sinceDate =
@@ -310,7 +344,7 @@ export class QuickBooksService {
     connection.lastSyncedAt = new Date();
     await this.quickBooksConnectionRepository.save(connection);
 
-    return {
+    const result = {
       since: sinceParam,
       fetched: invoices.length,
       imported: imported.length,
@@ -318,6 +352,37 @@ export class QuickBooksService {
       lastSyncedAt: connection.lastSyncedAt,
       jobs: imported,
     };
+    await this.logErpEvent(
+      companyId,
+      'quickbooks.sync.completed',
+      'QuickBooks invoice sync completed',
+      {
+        environment: connection.environment || 'test',
+        metadata: {
+          trigger,
+          since: result.since,
+          fetched: result.fetched,
+          imported: result.imported,
+          skipped: result.skipped,
+        },
+      },
+    );
+    return result;
+    } catch (error: any) {
+      if (trigger === 'manual') {
+        await this.logErpEvent(
+          companyId,
+          'quickbooks.sync.failed',
+          `QuickBooks invoice sync failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger, error: error.message },
+          },
+        );
+      }
+      throw error;
+    }
   }
 
   async listInvoices(companyId: string, maxResults = 25) {
@@ -709,5 +774,25 @@ export class QuickBooksService {
         'QuickBooks session expired. Reconnect via GET /quickbooks/:companyId/connect',
       );
     }
+  }
+
+  private async logErpEvent(
+    companyId: string,
+    eventType: string,
+    message: string,
+    options: {
+      level?: string;
+      environment?: string;
+      metadata?: Record<string, unknown>;
+    } = {},
+  ) {
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: options.environment || 'test',
+      eventType,
+      message,
+      level: options.level || 'info',
+      metadata: { source: 'quickbooks', ...(options.metadata || {}) },
+    });
   }
 }

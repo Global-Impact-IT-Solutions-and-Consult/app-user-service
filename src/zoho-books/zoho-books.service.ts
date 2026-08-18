@@ -35,6 +35,7 @@ import {
 import { CreateZohoWebhookDto } from './dto/zoho-webhook.dto';
 import { SyncZohoInvoicesDto } from './dto/sync-invoices.dto';
 import { ReceiptsService } from '../receipts/receipts.service';
+import { LoggingService } from '../logging/logging.service';
 
 @Injectable()
 export class ZohoBooksService {
@@ -51,6 +52,7 @@ export class ZohoBooksService {
     private companyRepository: Repository<Company>,
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
+    private loggingService: LoggingService,
   ) {}
 
   isConfigured(): boolean {
@@ -190,7 +192,32 @@ export class ZohoBooksService {
       connection.organizationId = String(orgs[0].organization_id);
     }
 
-    return this.zohoConnectionRepository.save(connection);
+    const saved = await this.zohoConnectionRepository.save(connection);
+    await this.logErpEvent(companyId, 'zoho.connected', 'Zoho Books connected', {
+      environment: saved.environment || 'test',
+      metadata: { organizationId: saved.organizationId },
+    });
+    return saved;
+  }
+
+  private async logErpEvent(
+    companyId: string,
+    eventType: string,
+    message: string,
+    options: {
+      level?: string;
+      environment?: string;
+      metadata?: Record<string, unknown>;
+    } = {},
+  ) {
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: options.environment || 'test',
+      eventType,
+      message,
+      level: options.level || 'info',
+      metadata: { source: 'zoho_books', ...(options.metadata || {}) },
+    });
   }
 
   async getConnectionStatus(companyId: string) {
@@ -268,10 +295,20 @@ export class ZohoBooksService {
 
     for (const connection of connections) {
       try {
-        await this.syncInvoices(connection.companyId, {});
+        await this.syncInvoices(connection.companyId, {}, 'poll');
       } catch (error: any) {
         this.logger.error(
           `Zoho poll failed for company ${connection.companyId}: ${error.message}`,
+        );
+        await this.logErpEvent(
+          connection.companyId,
+          'zoho.sync.failed',
+          `Zoho poll failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger: 'poll', error: error.message },
+          },
         );
       }
     }
@@ -280,8 +317,52 @@ export class ZohoBooksService {
   /**
    * Pull invoices modified since lastSyncedAt (or override), import new ones as jobs.
    */
-  async syncInvoices(companyId: string, dto: SyncZohoInvoicesDto = {}) {
+  async syncInvoices(
+    companyId: string,
+    dto: SyncZohoInvoicesDto = {},
+    trigger: 'manual' | 'poll' = 'manual',
+  ) {
     const connection = await this.requireConnection(companyId);
+    try {
+      const result = await this.runInvoiceSync(companyId, connection, dto);
+      await this.logErpEvent(
+        companyId,
+        'zoho.sync.completed',
+        'Zoho Books invoice sync completed',
+        {
+          environment: connection.environment || 'test',
+          metadata: {
+            trigger,
+            since: result.since,
+            fetched: result.fetched,
+            imported: result.imported,
+            skipped: result.skipped,
+          },
+        },
+      );
+      return result;
+    } catch (error: any) {
+      if (trigger === 'manual') {
+        await this.logErpEvent(
+          companyId,
+          'zoho.sync.failed',
+          `Zoho Books invoice sync failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger, error: error.message },
+          },
+        );
+      }
+      throw error;
+    }
+  }
+
+  private async runInvoiceSync(
+    companyId: string,
+    connection: ZohoConnection,
+    dto: SyncZohoInvoicesDto,
+  ) {
     const client = await this.getAuthedClient(companyId);
 
     const sinceDate =
@@ -594,6 +675,12 @@ export class ZohoBooksService {
     connection.isActive = false;
     connection.pollingEnabled = false;
     await this.zohoConnectionRepository.save(connection);
+    await this.logErpEvent(
+      companyId,
+      'zoho.disconnected',
+      'Zoho Books disconnected',
+      { environment: connection.environment || 'test' },
+    );
     return { message: 'Zoho Books disconnected' };
   }
 
@@ -619,8 +706,18 @@ export class ZohoBooksService {
 
   async setOrganization(companyId: string, organizationId: string) {
     const connection = await this.requireConnection(companyId);
+    const previousOrganizationId = connection.organizationId;
     connection.organizationId = organizationId;
     await this.zohoConnectionRepository.save(connection);
+    await this.logErpEvent(
+      companyId,
+      'zoho.organization.updated',
+      'Zoho Books organization selected',
+      {
+        environment: connection.environment || 'test',
+        metadata: { organizationId, previousOrganizationId },
+      },
+    );
     return { organizationId };
   }
 

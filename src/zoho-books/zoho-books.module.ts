@@ -8,6 +8,7 @@ import { ZohoInvoiceJob } from './entities/zoho-invoice-job.entity';
 import { ZohoWebhookEndpoint } from './entities/zoho-webhook-endpoint.entity';
 import { Company } from '../companies/entities/company.entity';
 import { ReceiptsModule } from '../receipts/receipts.module';
+import { LoggingModule } from '../logging/logging.module';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { ReceiptsModule } from '../receipts/receipts.module';
       Company,
     ]),
     ReceiptsModule,
+    LoggingModule,
   ],
   controllers: [ZohoBooksController, ZohoBooksWebhookController],
   providers: [ZohoBooksService],

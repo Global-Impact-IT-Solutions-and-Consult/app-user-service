@@ -20,6 +20,7 @@ import {
 import { Company } from '../companies/entities/company.entity';
 import { EncryptionUtil } from '../common/utils/encryption.util';
 import { ReceiptsService } from '../receipts/receipts.service';
+import { LoggingService } from '../logging/logging.service';
 import {
   SetXeroTenantDto,
   SyncXeroInvoicesDto,
@@ -38,6 +39,7 @@ export class XeroService {
     private companyRepository: Repository<Company>,
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
+    private loggingService: LoggingService,
   ) {}
 
   isConfigured(): boolean {
@@ -183,7 +185,15 @@ export class XeroService {
     connection.tenantId = String(selected.tenantId);
     connection.tenantName = selected.tenantName || null;
 
-    return this.xeroConnectionRepository.save(connection);
+    const saved = await this.xeroConnectionRepository.save(connection);
+    await this.logErpEvent(companyId, 'xero.connected', 'Xero connected', {
+      environment: saved.environment || 'test',
+      metadata: {
+        tenantId: saved.tenantId,
+        tenantName: saved.tenantName,
+      },
+    });
+    return saved;
   }
 
   async getConnectionStatus(companyId: string) {
@@ -220,6 +230,9 @@ export class XeroService {
     connection.isActive = false;
     connection.pollingEnabled = false;
     await this.xeroConnectionRepository.save(connection);
+    await this.logErpEvent(companyId, 'xero.disconnected', 'Xero disconnected', {
+      environment: connection.environment || 'test',
+    });
     return { message: 'Xero disconnected' };
   }
 
@@ -250,11 +263,25 @@ export class XeroService {
     const connection = await this.requireConnection(companyId, {
       requireTenant: false,
     });
+    const previousTenantId = connection.tenantId;
     connection.tenantId = dto.tenantId;
     if (dto.tenantName) {
       connection.tenantName = dto.tenantName;
     }
     await this.xeroConnectionRepository.save(connection);
+    await this.logErpEvent(
+      companyId,
+      'xero.tenant.updated',
+      'Xero organisation selected',
+      {
+        environment: connection.environment || 'test',
+        metadata: {
+          tenantId: connection.tenantId,
+          tenantName: connection.tenantName,
+          previousTenantId,
+        },
+      },
+    );
     return {
       tenantId: connection.tenantId,
       tenantName: connection.tenantName,
@@ -275,10 +302,20 @@ export class XeroService {
 
     for (const connection of connections) {
       try {
-        await this.syncInvoices(connection.companyId, {});
+        await this.syncInvoices(connection.companyId, {}, 'poll');
       } catch (error: any) {
         this.logger.error(
           `Xero poll failed for company ${connection.companyId}: ${error.message}`,
+        );
+        await this.logErpEvent(
+          connection.companyId,
+          'xero.sync.failed',
+          `Xero poll failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger: 'poll', error: error.message },
+          },
         );
       }
     }
@@ -287,8 +324,14 @@ export class XeroService {
   /**
    * Poll invoices modified since lastSyncedAt using If-Modified-Since.
    */
-  async syncInvoices(companyId: string, dto: SyncXeroInvoicesDto = {}) {
+  async syncInvoices(
+    companyId: string,
+    dto: SyncXeroInvoicesDto = {},
+    trigger: 'manual' | 'poll' = 'manual',
+  ) {
     const connection = await this.requireConnection(companyId);
+
+    try {
     const client = await this.getAuthedClient(companyId);
 
     const sinceDate =
@@ -359,7 +402,7 @@ export class XeroService {
     connection.lastSyncedAt = new Date();
     await this.xeroConnectionRepository.save(connection);
 
-    return {
+    const result = {
       since: sinceDate.toISOString(),
       fetched: invoices.length,
       imported: imported.length,
@@ -367,6 +410,37 @@ export class XeroService {
       lastSyncedAt: connection.lastSyncedAt,
       jobs: imported,
     };
+    await this.logErpEvent(
+      companyId,
+      'xero.sync.completed',
+      'Xero invoice sync completed',
+      {
+        environment: connection.environment || 'test',
+        metadata: {
+          trigger,
+          since: result.since,
+          fetched: result.fetched,
+          imported: result.imported,
+          skipped: result.skipped,
+        },
+      },
+    );
+    return result;
+    } catch (error: any) {
+      if (trigger === 'manual') {
+        await this.logErpEvent(
+          companyId,
+          'xero.sync.failed',
+          `Xero invoice sync failed: ${error.message}`,
+          {
+            level: 'error',
+            environment: connection.environment || 'test',
+            metadata: { trigger, error: error.message },
+          },
+        );
+      }
+      throw error;
+    }
   }
 
   async listInvoices(companyId: string, page = 1, _pageSize = 25) {
@@ -765,5 +839,25 @@ export class XeroService {
         'Xero session expired. Reconnect via GET /xero/:companyId/connect',
       );
     }
+  }
+
+  private async logErpEvent(
+    companyId: string,
+    eventType: string,
+    message: string,
+    options: {
+      level?: string;
+      environment?: string;
+      metadata?: Record<string, unknown>;
+    } = {},
+  ) {
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: options.environment || 'test',
+      eventType,
+      message,
+      level: options.level || 'info',
+      metadata: { source: 'xero', ...(options.metadata || {}) },
+    });
   }
 }

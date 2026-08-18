@@ -442,6 +442,10 @@ export class ReceiptsService {
       metadata = {},
     } = input;
 
+    const source =
+      typeof metadata.source === 'string' && metadata.source
+        ? metadata.source
+        : 'unknown';
     const url = `${this.receiptServiceUrl}${this.uploadPath.startsWith('/') ? '' : '/'}${this.uploadPath}`;
 
     try {
@@ -455,7 +459,7 @@ export class ReceiptsService {
         });
         form.append('companyId', companyId);
         form.append('environment', environment);
-        form.append('source', 'zoho_books');
+        form.append('source', source);
         form.append('metadata', JSON.stringify(metadata));
 
         response = await firstValueFrom(
@@ -475,7 +479,7 @@ export class ReceiptsService {
               {
                 companyId,
                 environment,
-                source: 'zoho_books',
+                source,
                 ...metadata,
               },
               { headers: { 'Content-Type': 'application/json' } },
@@ -496,7 +500,7 @@ export class ReceiptsService {
           level: 'info',
           processingStage: 'submitted',
           metadata: {
-            source: 'zoho_books',
+            source,
             filename,
             hasFile: Boolean(file?.length),
           },
@@ -511,6 +515,25 @@ export class ReceiptsService {
         `Failed to submit receipt for company ${companyId}: ${error.message}`,
         error.stack,
       );
+
+      try {
+        await this.searchService.createLog({
+          companyId,
+          environment,
+          eventType: 'receipt.submit.failed',
+          message: `Invoice submit to receipt service failed: ${error.message}`,
+          level: 'error',
+          processingStage: 'submitted',
+          metadata: {
+            source,
+            filename,
+            hasFile: Boolean(file?.length),
+            error: error.message,
+          },
+        });
+      } catch {
+        // non-critical
+      }
 
       if (error.name === 'TimeoutError' || error.message?.includes('timeout')) {
         throw new HttpException(
