@@ -16,6 +16,7 @@ import { CommonModule } from './common/common.module';
 import { ZohoBooksModule } from './zoho-books/zoho-books.module';
 import { QuickBooksModule } from './quickbooks/quickbooks.module';
 import { XeroModule } from './xero/xero.module';
+import { InvoicesModule } from './invoices/invoices.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { XeroModule } from './xero/xero.module';
     ZohoBooksModule,
     QuickBooksModule,
     XeroModule,
+    InvoicesModule,
   ],
   controllers: [AppController],
   providers: [

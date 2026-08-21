@@ -21,6 +21,8 @@ import { Company } from '../companies/entities/company.entity';
 import { EncryptionUtil } from '../common/utils/encryption.util';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { LoggingService } from '../logging/logging.service';
+import { InvoicesService } from '../invoices/invoices.service';
+import { InvoiceSource } from '../invoices/entities/invoice.entity';
 import { SyncQuickBooksInvoicesDto } from './dto/sync-invoices.dto';
 
 @Injectable()
@@ -37,6 +39,7 @@ export class QuickBooksService {
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
     private loggingService: LoggingService,
+    private invoicesService: InvoicesService,
   ) {}
 
   isConfigured(): boolean {
@@ -450,6 +453,14 @@ export class QuickBooksService {
     job.status = QuickBooksInvoiceJobStatus.IMPORTED;
     job.error = null;
     job = await this.quickBooksInvoiceJobRepository.save(job);
+
+    await this.invoicesService.upsertFromErp({
+      companyId,
+      environment: job.environment,
+      source: InvoiceSource.QUICKBOOKS,
+      externalId: String(invoiceId),
+      payload: invoice,
+    });
 
     if (options.submitForProcessing === false) {
       return this.toJobResponse(job, { pdfDownloaded: Boolean(pdf) });

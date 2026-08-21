@@ -7,12 +7,14 @@ import { XeroInvoiceJob } from './entities/xero-invoice-job.entity';
 import { Company } from '../companies/entities/company.entity';
 import { ReceiptsModule } from '../receipts/receipts.module';
 import { LoggingModule } from '../logging/logging.module';
+import { InvoicesModule } from '../invoices/invoices.module';
 
 @Module({
   imports: [
     TypeOrmModule.forFeature([XeroConnection, XeroInvoiceJob, Company]),
     ReceiptsModule,
     LoggingModule,
+    InvoicesModule,
   ],
   controllers: [XeroController],
   providers: [XeroService],

@@ -21,6 +21,8 @@ import { Company } from '../companies/entities/company.entity';
 import { EncryptionUtil } from '../common/utils/encryption.util';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { LoggingService } from '../logging/logging.service';
+import { InvoicesService } from '../invoices/invoices.service';
+import { InvoiceSource } from '../invoices/entities/invoice.entity';
 import {
   SetXeroTenantDto,
   SyncXeroInvoicesDto,
@@ -40,6 +42,7 @@ export class XeroService {
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
     private loggingService: LoggingService,
+    private invoicesService: InvoicesService,
   ) {}
 
   isConfigured(): boolean {
@@ -509,6 +512,14 @@ export class XeroService {
     job.status = XeroInvoiceJobStatus.IMPORTED;
     job.error = null;
     job = await this.xeroInvoiceJobRepository.save(job);
+
+    await this.invoicesService.upsertFromErp({
+      companyId,
+      environment: job.environment,
+      source: InvoiceSource.XERO,
+      externalId: String(invoiceId),
+      payload: invoice,
+    });
 
     if (options.submitForProcessing === false) {
       return this.toJobResponse(job, { pdfDownloaded: Boolean(pdf) });

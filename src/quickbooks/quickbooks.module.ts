@@ -7,6 +7,7 @@ import { QuickBooksInvoiceJob } from './entities/quickbooks-invoice-job.entity';
 import { Company } from '../companies/entities/company.entity';
 import { ReceiptsModule } from '../receipts/receipts.module';
 import { LoggingModule } from '../logging/logging.module';
+import { InvoicesModule } from '../invoices/invoices.module';
 
 @Module({
   imports: [
@@ -17,6 +18,7 @@ import { LoggingModule } from '../logging/logging.module';
     ]),
     ReceiptsModule,
     LoggingModule,
+    InvoicesModule,
   ],
   controllers: [QuickBooksController],
   providers: [QuickBooksService],

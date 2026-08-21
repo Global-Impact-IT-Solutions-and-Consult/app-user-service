@@ -60,6 +60,7 @@ async function bootstrap() {
     .addTag('zoho-books-webhooks', 'Zoho Books optional webhook push (separate from OAuth)')
     .addTag('quickbooks', 'QuickBooks Online OAuth + invoice poll')
     .addTag('xero', 'Xero OAuth + invoice poll')
+    .addTag('invoices', 'Stored invoices and NRS e-invoicing clearance')
     .addTag('logs', 'Log queries')
     .build();
 

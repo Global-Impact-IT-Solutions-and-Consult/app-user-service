@@ -36,6 +36,8 @@ import { CreateZohoWebhookDto } from './dto/zoho-webhook.dto';
 import { SyncZohoInvoicesDto } from './dto/sync-invoices.dto';
 import { ReceiptsService } from '../receipts/receipts.service';
 import { LoggingService } from '../logging/logging.service';
+import { InvoicesService } from '../invoices/invoices.service';
+import { InvoiceSource } from '../invoices/entities/invoice.entity';
 
 @Injectable()
 export class ZohoBooksService {
@@ -53,6 +55,7 @@ export class ZohoBooksService {
     private configService: ConfigService,
     private receiptsService: ReceiptsService,
     private loggingService: LoggingService,
+    private invoicesService: InvoicesService,
   ) {}
 
   isConfigured(): boolean {
@@ -887,6 +890,14 @@ export class ZohoBooksService {
     job.status = ZohoInvoiceJobStatus.IMPORTED;
     job.error = null;
     job = await this.zohoInvoiceJobRepository.save(job);
+
+    await this.invoicesService.upsertFromErp({
+      companyId,
+      environment: env,
+      source: InvoiceSource.ZOHO_BOOKS,
+      externalId: String(invoiceId),
+      payload: invoice as Record<string, unknown>,
+    });
 
     const shouldSubmit = dto.submitForProcessing !== false;
 

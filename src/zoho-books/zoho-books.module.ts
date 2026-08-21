@@ -9,6 +9,7 @@ import { ZohoWebhookEndpoint } from './entities/zoho-webhook-endpoint.entity';
 import { Company } from '../companies/entities/company.entity';
 import { ReceiptsModule } from '../receipts/receipts.module';
 import { LoggingModule } from '../logging/logging.module';
+import { InvoicesModule } from '../invoices/invoices.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { LoggingModule } from '../logging/logging.module';
     ]),
     ReceiptsModule,
     LoggingModule,
+    InvoicesModule,
   ],
   controllers: [ZohoBooksController, ZohoBooksWebhookController],
   providers: [ZohoBooksService],
