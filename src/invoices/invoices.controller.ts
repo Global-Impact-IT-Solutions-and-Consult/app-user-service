@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiOperation,
@@ -7,6 +7,7 @@ import {
 } from '@nestjs/swagger';
 import { InvoicesService } from './invoices.service';
 import { QueryInvoicesDto } from './dto/query-invoices.dto';
+import { CreateManualInvoiceDto } from './dto/create-manual-invoice.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import {
   CurrentUser,
@@ -19,6 +20,17 @@ import {
 @ApiBearerAuth('JWT-auth')
 export class InvoicesController {
   constructor(private invoicesService: InvoicesService) {}
+
+  @Post(':companyId')
+  @ApiOperation({ summary: 'Create a GIITSC manual invoice for a company' })
+  @ApiParam({ name: 'companyId' })
+  async createManual(
+    @Param('companyId') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: CreateManualInvoiceDto,
+  ) {
+    return this.invoicesService.createManual(companyId, user.userId, dto);
+  }
 
   @Get(':companyId')
   @ApiOperation({ summary: 'List stored invoices for a company' })

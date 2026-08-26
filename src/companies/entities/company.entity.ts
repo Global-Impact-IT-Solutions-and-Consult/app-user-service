@@ -33,6 +33,24 @@ export class Company {
   @Column({ nullable: true })
   taxId: string;
 
+  @Column({ nullable: true })
+  businessType: string;
+
+  @Column({ nullable: true })
+  industry: string;
+
+  @Column({ type: 'text', nullable: true })
+  registeredAddress: string;
+
+  @Column({ nullable: true })
+  contactPhone: string;
+
+  @Column({ nullable: true })
+  contactPerson: string;
+
+  @Column({ nullable: true })
+  contactEmail: string;
+
   @Column('jsonb', { nullable: true })
   documents: Record<string, string>;
 

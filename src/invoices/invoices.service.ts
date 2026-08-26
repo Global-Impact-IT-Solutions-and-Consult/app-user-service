@@ -15,6 +15,7 @@ import {
 import { Company } from '../companies/entities/company.entity';
 import { LoggingService } from '../logging/logging.service';
 import { QueryInvoicesDto } from './dto/query-invoices.dto';
+import { CreateManualInvoiceDto } from './dto/create-manual-invoice.dto';
 import { normalizeErpInvoice } from './erp-invoice.normalizer';
 import { NrsMapper } from '../nrs/nrs.mapper';
 import { NRS_CLIENT, NrsClient } from '../nrs/nrs.types';
@@ -93,6 +94,7 @@ export class InvoicesService {
       invoice.environment = input.environment || 'test';
       invoice.invoiceNumber = normalized.invoiceNumber || invoice.invoiceNumber;
       invoice.issueDate = normalized.issueDate ?? invoice.issueDate;
+      invoice.dueDate = normalized.dueDate ?? invoice.dueDate;
       invoice.currency = normalized.currency || invoice.currency || 'NGN';
       invoice.subtotal =
         normalized.subtotal != null ? String(normalized.subtotal) : invoice.subtotal;
@@ -105,6 +107,8 @@ export class InvoicesService {
       invoice.sellerTin = company.taxId || invoice.sellerTin;
       invoice.buyerName = normalized.buyerName || invoice.buyerName;
       invoice.buyerTin = normalized.buyerTin || invoice.buyerTin;
+      invoice.buyerEmail = normalized.buyerEmail || invoice.buyerEmail;
+      invoice.buyerPhone = normalized.buyerPhone || invoice.buyerPhone;
       invoice.lines = normalized.lines;
       invoice.sourcePayload = input.payload;
 
@@ -133,6 +137,88 @@ export class InvoicesService {
       );
       return null;
     }
+  }
+
+  async createManual(
+    companyId: string,
+    userId: string,
+    dto: CreateManualInvoiceDto,
+  ) {
+    const company = await this.assertCompanyMember(companyId, userId);
+    const invoiceNumber =
+      dto.invoiceNumber ||
+      `GIITSC-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random()
+        .toString(36)
+        .slice(2, 8)
+        .toUpperCase()}`;
+
+    const lines = dto.lineItems.map((line) => {
+      const amount = this.round(line.quantity * line.rate);
+      const taxRate = line.taxRate ?? 0;
+      const taxAmount = this.round((amount * taxRate) / 100);
+      return {
+        description: line.description,
+        quantity: line.quantity,
+        unitPrice: line.rate,
+        amount,
+        taxRate,
+        taxAmount,
+        unit: 'EA',
+      };
+    });
+    const subtotal = this.round(lines.reduce((sum, line) => sum + (line.amount || 0), 0));
+    const taxTotal = this.round(lines.reduce((sum, line) => sum + (line.taxAmount || 0), 0));
+    const total = this.round(subtotal + taxTotal);
+
+    let invoice = this.invoiceRepository.create({
+      companyId,
+      environment: 'test',
+      source: InvoiceSource.MANUAL,
+      externalId: invoiceNumber,
+      invoiceNumber,
+      issueDate: dto.invoiceDate,
+      dueDate: dto.dueDate,
+      currency: dto.currency || 'NGN',
+      subtotal: String(subtotal),
+      taxTotal: String(taxTotal),
+      total: String(total),
+      status: 'draft',
+      sellerName: company.legalName || company.name,
+      sellerTin: company.taxId,
+      buyerName: dto.customerName,
+      buyerTin: dto.customerTaxId || null,
+      buyerEmail: dto.customerEmail || null,
+      buyerPhone: dto.customerPhone || null,
+      notes: dto.notes || null,
+      lines,
+      sourcePayload: dto as unknown as Record<string, unknown>,
+      nrsStatus: NrsInvoiceStatus.NOT_SUBMITTED,
+    });
+
+    invoice = await this.invoiceRepository.save(invoice);
+
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: invoice.environment,
+      eventType: 'invoice.manual.created',
+      message: `Manual invoice ${invoice.invoiceNumber} created`,
+      level: 'info',
+      metadata: {
+        invoiceId: invoice.id,
+        userId,
+        sendInvoice: Boolean(dto.sendInvoice),
+      },
+    });
+
+    if (dto.sendInvoice) {
+      const submitted = await this.submitNrs(companyId, invoice.id);
+      return {
+        invoice: await this.get(companyId, invoice.id),
+        nrs: submitted,
+      };
+    }
+
+    return { invoice: this.toResponse(invoice) };
   }
 
   async list(companyId: string, query: QueryInvoicesDto) {
@@ -204,6 +290,8 @@ export class InvoicesService {
       invoice.qrCodeData = retrieved.QRCodeData || submitted.QRCodeData;
       invoice.nrsResponse = retrieved as unknown as Record<string, unknown>;
       invoice.nrsStatus = NrsInvoiceStatus.SUBMITTED;
+      invoice.status = 'sent';
+      invoice.sentAt = new Date();
       invoice.nrsError = null;
       await this.invoiceRepository.save(invoice);
 
@@ -276,6 +364,7 @@ export class InvoicesService {
       externalId: invoice.externalId,
       invoiceNumber: invoice.invoiceNumber,
       issueDate: invoice.issueDate,
+      dueDate: invoice.dueDate,
       currency: invoice.currency,
       subtotal: invoice.subtotal,
       taxTotal: invoice.taxTotal,
@@ -285,12 +374,20 @@ export class InvoicesService {
       sellerTin: invoice.sellerTin,
       buyerName: invoice.buyerName,
       buyerTin: invoice.buyerTin,
+      buyerEmail: invoice.buyerEmail,
+      buyerPhone: invoice.buyerPhone,
+      notes: invoice.notes,
       lines: invoice.lines,
       nrsStatus: invoice.nrsStatus,
       irn: invoice.irn,
+      sentAt: invoice.sentAt,
       createdAt: invoice.createdAt,
       updatedAt: invoice.updatedAt,
     };
+  }
+
+  private round(value: number): number {
+    return Math.round((value + Number.EPSILON) * 100) / 100;
   }
 
   private toNrsResponse(invoice: Invoice) {

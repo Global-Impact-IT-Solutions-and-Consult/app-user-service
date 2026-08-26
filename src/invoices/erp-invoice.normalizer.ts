@@ -3,6 +3,7 @@ import { InvoiceLine, InvoiceSource } from './entities/invoice.entity';
 export type NormalizedInvoice = {
   invoiceNumber?: string;
   issueDate?: string | null;
+  dueDate?: string | null;
   currency?: string;
   subtotal?: number | null;
   taxTotal?: number | null;
@@ -10,6 +11,8 @@ export type NormalizedInvoice = {
   status?: string;
   buyerName?: string;
   buyerTin?: string;
+  buyerEmail?: string;
+  buyerPhone?: string;
   lines: InvoiceLine[];
 };
 
@@ -63,6 +66,7 @@ function fromXero(payload: Record<string, any>): NormalizedInvoice {
   return {
     invoiceNumber: payload.InvoiceNumber || payload.invoiceNumber,
     issueDate: toDateString(payload.DateString || payload.Date || payload.date),
+    dueDate: toDateString(payload.DueDateString || payload.DueDate || payload.dueDate),
     currency: payload.CurrencyCode || payload.currencyCode,
     subtotal: toNumber(payload.SubTotal),
     taxTotal: toNumber(payload.TotalTax),
@@ -73,6 +77,12 @@ function fromXero(payload: Record<string, any>): NormalizedInvoice {
       contact.TaxNumber ||
       contact.taxNumber ||
       contact.CompanyNumber ||
+      undefined,
+    buyerEmail: contact.EmailAddress || contact.emailAddress || contact.email,
+    buyerPhone:
+      contact.Phones?.[0]?.PhoneNumber ||
+      contact.Phone ||
+      contact.phone ||
       undefined,
     lines,
   };
@@ -103,6 +113,7 @@ function fromQuickBooks(payload: Record<string, any>): NormalizedInvoice {
   return {
     invoiceNumber: payload.DocNumber || payload.docNumber,
     issueDate: toDateString(payload.TxnDate),
+    dueDate: toDateString(payload.DueDate),
     currency: payload.CurrencyRef?.value || payload.CurrencyRef,
     subtotal: toNumber(payload.TotalAmt) != null
       ? (toNumber(payload.TotalAmt)! - (toNumber(taxDetail.TotalTax) || 0))
@@ -112,6 +123,11 @@ function fromQuickBooks(payload: Record<string, any>): NormalizedInvoice {
     status: payload.EmailStatus || payload.PrivateNote || undefined,
     buyerName: payload.CustomerRef?.name,
     buyerTin: payload.BillAddr?.CountrySubDivisionCode,
+    buyerEmail: payload.BillEmail?.Address || payload.PrimaryEmailAddr?.Address,
+    buyerPhone:
+      payload.PrimaryPhone?.FreeFormNumber ||
+      payload.BillAddr?.Phone ||
+      undefined,
     lines,
   };
 }
@@ -134,6 +150,7 @@ function fromZoho(payload: Record<string, any>): NormalizedInvoice {
   return {
     invoiceNumber: payload.invoice_number || payload.number,
     issueDate: toDateString(payload.date),
+    dueDate: toDateString(payload.due_date || payload.dueDate),
     currency: payload.currency_code,
     subtotal: toNumber(payload.sub_total),
     taxTotal: toNumber(payload.tax_total || payload.tax_amount),
@@ -145,6 +162,14 @@ function fromZoho(payload: Record<string, any>): NormalizedInvoice {
       payload.tax_id ||
       payload.vat_reg_no ||
       payload.customer_tax_id,
+    buyerEmail:
+      payload.email ||
+      payload.customer_email ||
+      payload.contact_persons?.[0]?.email,
+    buyerPhone:
+      payload.phone ||
+      payload.customer_phone ||
+      payload.contact_persons?.[0]?.phone,
     lines,
   };
 }

@@ -15,6 +15,7 @@ import { User } from '../users/entities/user.entity';
 import { Webhook } from './entities/webhook.entity';
 import { CompanySettingsService } from '../company-settings/company-settings.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { UpdateCompanyDto } from './dto/update-company.dto';
 import {
   CreateWebhookDto,
   UpdateWebhookDto,
@@ -167,6 +168,43 @@ export class CompaniesService {
       .innerJoin('company.members', 'user')
       .where('user.id = :userId', { userId })
       .getMany();
+  }
+
+  async update(
+    companyId: string,
+    userId: string,
+    updateCompanyDto: UpdateCompanyDto,
+  ): Promise<Company> {
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+      relations: ['members'],
+    });
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+
+    const isMember = company.members?.some((member) => member.id === userId);
+    if (!isMember) {
+      throw new ForbiddenException('You do not have access to this company');
+    }
+
+    Object.assign(company, updateCompanyDto);
+    const savedCompany = await this.companyRepository.save(company);
+
+    try {
+      await this.loggingService.createLog({
+        companyId,
+        environment: 'test',
+        eventType: 'company.profile.updated',
+        message: `Company "${savedCompany.name}" profile updated`,
+        level: 'info',
+        metadata: { userId, companyId },
+      });
+    } catch (error) {
+      // Don't fail if logging fails
+    }
+
+    return savedCompany;
   }
 
   async updateOnboardingStep(

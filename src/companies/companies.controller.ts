@@ -22,6 +22,7 @@ import {
 } from '@nestjs/swagger';
 import { CompaniesService } from './companies.service';
 import { CreateCompanyDto } from './dto/create-company.dto';
+import { UpdateCompanyDto } from './dto/update-company.dto';
 import {
   CreateWebhookDto,
   UpdateWebhookDto,
@@ -84,6 +85,21 @@ export class CompaniesController {
     }
 
     return company;
+  }
+
+  @Put(':id')
+  @ApiOperation({ summary: 'Update company profile details' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiBody({ type: UpdateCompanyDto })
+  @ApiResponse({ status: 200, description: 'Company updated successfully' })
+  @ApiResponse({ status: 404, description: 'Company not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async updateCompany(
+    @Param('id') id: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() updateCompanyDto: UpdateCompanyDto,
+  ) {
+    return this.companiesService.update(id, user.userId, updateCompanyDto);
   }
 
   @Put(':id/onboarding/:step')

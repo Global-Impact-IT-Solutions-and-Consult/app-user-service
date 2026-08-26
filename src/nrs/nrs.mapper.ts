@@ -26,6 +26,7 @@ export class NrsMapper {
       invoice.invoiceNumber || invoice.externalId,
     );
     const issueDate = invoice.issueDate || new Date().toISOString().slice(0, 10);
+    const dueDate = invoice.dueDate || issueDate;
     const irn = `${invoiceNumber}-${serviceId}-${issueDate.replace(/-/g, '')}`;
 
     if (!sellerTin) {
@@ -93,7 +94,7 @@ export class NrsMapper {
       irn,
       invoice_kind: 'B2B',
       issue_date: issueDate,
-      due_date: issueDate,
+      due_date: dueDate,
       issue_time: new Date().toISOString().slice(11, 19),
       invoice_type_code: '381',
       payment_status: 'PENDING',
@@ -103,13 +104,20 @@ export class NrsMapper {
       accounting_supplier_party: {
         party_name: invoice.sellerName || company.legalName || company.name,
         tin: sellerTin,
-        email: this.configService.get<string>('NRS_SUPPLIER_EMAIL') || undefined,
+        email:
+          this.configService.get<string>('NRS_SUPPLIER_EMAIL') ||
+          company.contactEmail ||
+          undefined,
         telephone:
-          this.configService.get<string>('NRS_SUPPLIER_PHONE') || undefined,
-        business_description: 'General',
+          this.configService.get<string>('NRS_SUPPLIER_PHONE') ||
+          company.contactPhone ||
+          undefined,
+        business_description: company.industry || 'General',
         postal_address: {
           street_name:
-            this.configService.get<string>('NRS_SUPPLIER_STREET') || 'N/A',
+            this.configService.get<string>('NRS_SUPPLIER_STREET') ||
+            company.registeredAddress ||
+            'N/A',
           city_name:
             this.configService.get<string>('NRS_SUPPLIER_CITY') || 'Lagos',
           postal_zone: '',
@@ -119,8 +127,8 @@ export class NrsMapper {
       accounting_customer_party: {
         party_name: invoice.buyerName || 'Customer',
         tin: invoice.buyerTin || sellerTin,
-        email: undefined,
-        telephone: undefined,
+        email: invoice.buyerEmail || undefined,
+        telephone: invoice.buyerPhone || undefined,
         business_description: null,
         postal_address: {
           street_name: 'N/A',

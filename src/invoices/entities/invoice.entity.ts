@@ -67,6 +67,9 @@ export class Invoice {
   @Column({ type: 'date', nullable: true })
   issueDate: string | null;
 
+  @Column({ type: 'date', nullable: true })
+  dueDate: string | null;
+
   @Column({ type: 'varchar', nullable: true })
   currency: string | null;
 
@@ -93,6 +96,18 @@ export class Invoice {
 
   @Column({ type: 'varchar', nullable: true })
   buyerTin: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  buyerEmail: string | null;
+
+  @Column({ type: 'varchar', nullable: true })
+  buyerPhone: string | null;
+
+  @Column({ type: 'text', nullable: true })
+  notes: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  sentAt: Date | null;
 
   @Column({ type: 'jsonb', nullable: true })
   lines: InvoiceLine[] | null;
