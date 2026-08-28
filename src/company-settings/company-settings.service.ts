@@ -288,6 +288,15 @@ export class CompanySettingsService {
     await this.settingsRepository.save(settings);
   }
 
+  async deactivateAllWebhooks(companyId: string, userId: string): Promise<number> {
+    const webhooks = await this.getWebhooks(companyId, userId);
+    for (const webhook of webhooks) {
+      webhook.isActive = false;
+      await this.webhookRepository.save(webhook);
+    }
+    return webhooks.length;
+  }
+
   /**
    * Create a webhook for a specific Settings
    */

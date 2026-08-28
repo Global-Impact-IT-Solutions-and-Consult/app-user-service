@@ -60,6 +60,46 @@ export class EmailService {
     await this.send({ to: email, subject, html, critical: false });
   }
 
+  async sendPasswordResetEmail(email: string, resetUrl: string): Promise<void> {
+    const subject = 'Reset your password';
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Password reset</h2>
+          <p>We received a request to reset your password. Click the button below to choose a new one:</p>
+          <p style="margin: 28px 0;">
+            <a href="${resetUrl}" style="background:#111;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px;">
+              Reset password
+            </a>
+          </p>
+          <p>This link expires in 1 hour. If you did not request a reset, you can ignore this email.</p>
+        </div>
+      `;
+    const text = `Reset your password: ${resetUrl} (expires in 1 hour)`;
+    await this.send({ to: email, subject, html, text, critical: false });
+  }
+
+  async sendTeamInviteEmail(
+    email: string,
+    companyName: string,
+    inviteUrl: string,
+  ): Promise<void> {
+    const subject = `You've been invited to ${companyName}`;
+    const html = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+          <h2 style="color: #333;">Team invite</h2>
+          <p>You have been invited to join <strong>${companyName}</strong>.</p>
+          <p style="margin: 28px 0;">
+            <a href="${inviteUrl}" style="background:#111;color:#fff;padding:12px 18px;text-decoration:none;border-radius:6px;">
+              Accept invite
+            </a>
+          </p>
+          <p>This invite expires in 7 days.</p>
+        </div>
+      `;
+    const text = `Join ${companyName}: ${inviteUrl} (expires in 7 days)`;
+    await this.send({ to: email, subject, html, text, critical: false });
+  }
+
   private async send(options: {
     to: string;
     subject: string;

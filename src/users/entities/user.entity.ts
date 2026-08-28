@@ -88,6 +88,13 @@ export class User {
   @Column({ type: 'timestamp', nullable: true })
   lockedUntil: Date | null;
 
+  @Column({ type: 'varchar', nullable: true })
+  @Index()
+  passwordResetTokenHash: string | null;
+
+  @Column({ type: 'timestamp', nullable: true })
+  passwordResetExpiresAt: Date | null;
+
   @Column({ default: true })
   isActive: boolean;
 

@@ -26,6 +26,15 @@ import { UsersService } from '../users/users.service';
 import axios from 'axios';
 import { SettingsType } from './entities/settings.entity';
 import { LoggingService } from '../logging/logging.service';
+import { EmailService } from '../common/services/email.service';
+import { ConfigService } from '@nestjs/config';
+import {
+  CompanyInvite,
+  CompanyInviteStatus,
+} from './entities/company-invite.entity';
+import { InviteMemberDto } from './dto/invite-member.dto';
+import { DeleteCompanyDto } from './dto/delete-company.dto';
+import { AcceptInviteDto } from '../auth/dto/accept-invite.dto';
 
 @Injectable()
 export class CompaniesService {
@@ -36,9 +45,13 @@ export class CompaniesService {
     private companyRepository: Repository<Company>,
     @InjectRepository(User)
     private userRepository: Repository<User>,
+    @InjectRepository(CompanyInvite)
+    private inviteRepository: Repository<CompanyInvite>,
     private usersService: UsersService,
     private companySettingsService: CompanySettingsService,
     private loggingService: LoggingService,
+    private emailService: EmailService,
+    private configService: ConfigService,
   ) {}
 
   async create(
@@ -605,5 +618,395 @@ export class CompaniesService {
     }
 
     return secret;
+  }
+
+  async listMembers(companyId: string, userId: string) {
+    const company = await this.requireMember(companyId, userId);
+    return (company.members || []).map((member) => ({
+      id: member.id,
+      email: member.email,
+      roles: member.roles || [],
+      isActive: member.isActive,
+      lastLoginAt: member.lastLoginAt,
+      isCurrentUser: member.id === userId,
+    }));
+  }
+
+  async inviteMember(
+    companyId: string,
+    userId: string,
+    dto: InviteMemberDto,
+  ) {
+    const company = await this.requireMember(companyId, userId);
+    const email = dto.email.toLowerCase();
+    const role = dto.role || 'member';
+
+    const alreadyMember = company.members?.some(
+      (member) => member.email.toLowerCase() === email,
+    );
+    if (alreadyMember) {
+      throw new BadRequestException('User is already a member of this company');
+    }
+
+    await this.inviteRepository.update(
+      {
+        companyId,
+        email,
+        status: CompanyInviteStatus.PENDING,
+      },
+      { status: CompanyInviteStatus.REVOKED },
+    );
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const invite = this.inviteRepository.create({
+      companyId,
+      email,
+      role,
+      tokenHash: this.hashToken(token),
+      invitedBy: userId,
+      status: CompanyInviteStatus.PENDING,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000),
+    });
+    const saved = await this.inviteRepository.save(invite);
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ||
+      'http://localhost:5173';
+    const inviteUrl = `${frontendUrl.replace(/\/$/, '')}/accept-invite?token=${token}`;
+    await this.emailService.sendTeamInviteEmail(email, company.name, inviteUrl);
+
+    if (this.configService.get<string>('NODE_ENV') !== 'production') {
+      console.log(`\n========================================`);
+      console.log(`[INVITE] Company: ${company.name}`);
+      console.log(`[INVITE] Email: ${email}`);
+      console.log(`[INVITE] Token: ${token}`);
+      console.log(`========================================\n`);
+    }
+
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: 'test',
+      eventType: 'company.member.invited',
+      message: `Invited ${email} to ${company.name}`,
+      level: 'info',
+      metadata: { userId, email, role, inviteId: saved.id },
+    });
+
+    return {
+      id: saved.id,
+      email: saved.email,
+      role: saved.role,
+      status: saved.status,
+      expiresAt: saved.expiresAt,
+      message: 'Invite sent',
+    };
+  }
+
+  async listInvites(companyId: string, userId: string) {
+    await this.requireMember(companyId, userId);
+    const invites = await this.inviteRepository.find({
+      where: { companyId },
+      order: { createdAt: 'DESC' },
+    });
+    return invites.map((invite) => ({
+      id: invite.id,
+      email: invite.email,
+      role: invite.role,
+      status: invite.status,
+      expiresAt: invite.expiresAt,
+      acceptedAt: invite.acceptedAt,
+      createdAt: invite.createdAt,
+    }));
+  }
+
+  async revokeInvite(companyId: string, userId: string, inviteId: string) {
+    await this.requireMember(companyId, userId);
+    const invite = await this.inviteRepository.findOne({
+      where: { id: inviteId, companyId },
+    });
+    if (!invite) {
+      throw new NotFoundException('Invite not found');
+    }
+    invite.status = CompanyInviteStatus.REVOKED;
+    await this.inviteRepository.save(invite);
+    return { message: 'Invite revoked' };
+  }
+
+  async removeMember(companyId: string, actorId: string, memberId: string) {
+    const company = await this.requireMember(companyId, actorId);
+    if (memberId === actorId) {
+      throw new BadRequestException('You cannot remove yourself from the company');
+    }
+    const member = company.members?.find((m) => m.id === memberId);
+    if (!member) {
+      throw new NotFoundException('Member not found in this company');
+    }
+    if ((company.members || []).length <= 1) {
+      throw new BadRequestException('Cannot remove the last company member');
+    }
+
+    await this.companyRepository
+      .createQueryBuilder()
+      .relation(Company, 'members')
+      .of(companyId)
+      .remove(memberId);
+
+    if (member.currentCompanyId === companyId) {
+      await this.userRepository.update(memberId, { currentCompanyId: null });
+    }
+
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: 'test',
+      eventType: 'company.member.removed',
+      message: `Removed ${member.email} from ${company.name}`,
+      level: 'warning',
+      metadata: { userId: actorId, removedUserId: memberId },
+    });
+
+    return { message: 'Member removed' };
+  }
+
+  async acceptInvite(dto: AcceptInviteDto) {
+    const invite = await this.inviteRepository.findOne({
+      where: { tokenHash: this.hashToken(dto.token) },
+      relations: ['company', 'company.members'],
+    });
+    if (
+      !invite ||
+      invite.status !== CompanyInviteStatus.PENDING ||
+      invite.expiresAt < new Date()
+    ) {
+      throw new BadRequestException('Invalid or expired invite');
+    }
+
+    let user = await this.userRepository.findOne({
+      where: { email: invite.email },
+      relations: ['companies'],
+    });
+
+    if (!user) {
+      if (!dto.password) {
+        throw new BadRequestException(
+          'Password is required to create an account for this invite',
+        );
+      }
+      const passwordHash = await bcrypt.hash(dto.password, 12);
+      user = this.userRepository.create({
+        email: invite.email,
+        passwordHash,
+        isEmailVerified: true,
+        mfaEnabled: false,
+        roles: [invite.role],
+        currentCompanyId: invite.companyId,
+      });
+      user = await this.userRepository.save(user);
+    } else {
+      const roles = new Set([...(user.roles || []), invite.role]);
+      user.roles = [...roles];
+      if (!user.currentCompanyId) {
+        user.currentCompanyId = invite.companyId;
+      }
+      await this.userRepository.save(user);
+    }
+
+    const already = invite.company.members?.some((m) => m.id === user.id);
+    if (!already) {
+      await this.companyRepository
+        .createQueryBuilder()
+        .relation(Company, 'members')
+        .of(invite.companyId)
+        .add(user.id);
+    }
+
+    invite.status = CompanyInviteStatus.ACCEPTED;
+    invite.acceptedAt = new Date();
+    await this.inviteRepository.save(invite);
+
+    await this.loggingService.safeCreateLog({
+      companyId: invite.companyId,
+      environment: 'test',
+      eventType: 'company.member.joined',
+      message: `${user.email} accepted invite to ${invite.company.name}`,
+      level: 'info',
+      metadata: { userId: user.id, inviteId: invite.id },
+    });
+
+    return {
+      message: 'Invite accepted',
+      companyId: invite.companyId,
+      companyName: invite.company.name,
+      userId: user.id,
+      email: user.email,
+    };
+  }
+
+  async resetApiConfig(companyId: string, userId: string) {
+    await this.requireMember(companyId, userId);
+
+    const testKeys = await this.companySettingsService.regenerateApiKeys(
+      companyId,
+      userId,
+      SettingsType.TEST,
+    );
+    let liveKeys: { publicKey: string; secretKey: string } | null = null;
+    try {
+      liveKeys = await this.companySettingsService.regenerateApiKeys(
+        companyId,
+        userId,
+        SettingsType.LIVE,
+      );
+    } catch {
+      liveKeys = null;
+    }
+
+    const webhooksDisabled =
+      await this.companySettingsService.deactivateAllWebhooks(companyId, userId);
+
+    await this.loggingService.safeCreateLog({
+      companyId,
+      environment: 'test',
+      eventType: 'company.api_config.reset',
+      message: 'API configuration reset (keys regenerated, webhooks disabled)',
+      level: 'warning',
+      metadata: { userId, webhooksDisabled },
+    });
+
+    return {
+      message:
+        'API config reset. Save the new keys now; previous keys no longer work. Webhooks were disabled.',
+      webhooksDisabled,
+      keys: {
+        test: testKeys,
+        live: liveKeys,
+      },
+    };
+  }
+
+  async deleteCompany(
+    companyId: string,
+    userId: string,
+    dto: DeleteCompanyDto,
+  ) {
+    const company = await this.requireMember(companyId, userId);
+    if (dto.confirmation.trim() !== company.name) {
+      throw new BadRequestException(
+        'Confirmation must match the company name exactly',
+      );
+    }
+
+    await this.userRepository
+      .createQueryBuilder()
+      .update(User)
+      .set({ currentCompanyId: null })
+      .where('"currentCompanyId" = :companyId', { companyId })
+      .execute();
+
+    const memberIds = (company.members || []).map((m) => m.id);
+    if (memberIds.length) {
+      await this.companyRepository
+        .createQueryBuilder()
+        .relation(Company, 'members')
+        .of(companyId)
+        .remove(memberIds);
+    }
+
+    const queryRunner =
+      this.companyRepository.manager.connection.createQueryRunner();
+    await queryRunner.connect();
+    await queryRunner.startTransaction();
+    try {
+      await queryRunner.query(
+        `DELETE FROM "webhook_events" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "webhooks" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "settings" WHERE "companySettingsId" IN (SELECT id FROM "company_settings" WHERE "companyId" = $1)`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "company_settings" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "company_invites" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "invoices" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "zoho_invoice_jobs" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "zoho_webhook_endpoints" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "zoho_connections" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "quickbooks_invoice_jobs" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "quickbooks_connections" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "xero_invoice_jobs" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(
+        `DELETE FROM "xero_connections" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.query(`DELETE FROM "logs" WHERE "companyId" = $1`, [
+        companyId,
+      ]);
+      await queryRunner.query(
+        `DELETE FROM "user_companies" WHERE "companyId" = $1`,
+        [companyId],
+      );
+      await queryRunner.manager.delete(Company, { id: companyId });
+      await queryRunner.commitTransaction();
+    } catch (error: any) {
+      await queryRunner.rollbackTransaction();
+      this.logger.error(
+        `Failed to delete company ${companyId}: ${error.message}`,
+        error.stack,
+      );
+      throw new InternalServerErrorException('Failed to delete company');
+    } finally {
+      await queryRunner.release();
+    }
+
+    return { message: `Company "${company.name}" deleted` };
+  }
+
+  private async requireMember(companyId: string, userId: string) {
+    const company = await this.companyRepository.findOne({
+      where: { id: companyId },
+      relations: ['members'],
+    });
+    if (!company) {
+      throw new NotFoundException('Company not found');
+    }
+    const isMember = company.members?.some((m) => m.id === userId);
+    if (!isMember) {
+      throw new ForbiddenException('You do not have access to this company');
+    }
+    return company;
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
   }
 }

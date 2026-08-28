@@ -4,7 +4,6 @@ import {
   Body,
   UseGuards,
   Get,
-  Request,
   Req,
   HttpCode,
   HttpStatus,
@@ -21,7 +20,11 @@ import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
+import { CompaniesService } from '../companies/companies.service';
 import { LoginDto } from './dto/login.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
+import { AcceptInviteDto } from './dto/accept-invite.dto';
 import { MfaVerifyDto } from './dto/mfa-verify.dto';
 import { SignupDto } from './dto/signup.dto';
 import { SwitchEnvironmentDto } from './dto/switch-environment.dto';
@@ -44,6 +47,7 @@ export class AuthController {
   constructor(
     private authService: AuthService,
     private usersService: UsersService,
+    private companiesService: CompaniesService,
   ) {}
 
   @Public()
@@ -82,6 +86,52 @@ export class AuthController {
       requiresMfa: true,
       tempToken,
     };
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('forgot-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Request a password reset email',
+    description:
+      'Always returns a generic success message so callers cannot enumerate accounts.',
+  })
+  @ApiBody({ type: ForgotPasswordDto })
+  @ApiResponse({
+    status: 200,
+    description: 'If the email exists, a reset link has been sent',
+  })
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.authService.forgotPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60000 } })
+  @Post('reset-password')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Reset password using the email token' })
+  @ApiBody({ type: ResetPasswordDto })
+  @ApiResponse({ status: 200, description: 'Password reset successfully' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired token' })
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.authService.resetPassword(dto);
+  }
+
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60000 } })
+  @Post('accept-invite')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Accept a company team invite',
+    description:
+      'Existing users join the company. New emails must send a password to create an account.',
+  })
+  @ApiBody({ type: AcceptInviteDto })
+  @ApiResponse({ status: 200, description: 'Invite accepted' })
+  @ApiResponse({ status: 400, description: 'Invalid or expired invite' })
+  async acceptInvite(@Body() dto: AcceptInviteDto) {
+    return this.companiesService.acceptInvite(dto);
   }
 
   @Public()

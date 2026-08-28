@@ -10,6 +10,8 @@ import {
   Query,
   NotFoundException,
   ForbiddenException,
+  HttpCode,
+  HttpStatus,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -30,6 +32,8 @@ import {
 } from './dto/webhook.dto';
 import { UpdateOnboardingStepDto } from './dto/update-onboarding-step.dto';
 import { RegenerateApiKeysDto } from './dto/regenerate-api-keys.dto';
+import { InviteMemberDto } from './dto/invite-member.dto';
+import { DeleteCompanyDto } from './dto/delete-company.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { CurrentUser, CurrentUserPayload } from '../common/decorators/current-user.decorator';
 
@@ -322,5 +326,127 @@ export class CompaniesController {
       message: 'Webhook secret regenerated. Please save it securely.',
       signingSecret: secret,
     };
+  }
+
+  @Get(':id/members')
+  @ApiOperation({ summary: 'List company team members' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiResponse({ status: 200, description: 'List of members' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async listMembers(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.listMembers(companyId, user.userId);
+  }
+
+  @Delete(':id/members/:memberId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Remove a team member from the company' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiParam({ name: 'memberId', description: 'User ID to remove' })
+  @ApiResponse({ status: 200, description: 'Member removed' })
+  @ApiResponse({ status: 400, description: 'Cannot remove last member or self' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async removeMember(
+    @Param('id') companyId: string,
+    @Param('memberId') memberId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.removeMember(
+      companyId,
+      user.userId,
+      memberId,
+    );
+  }
+
+  @Post(':id/invites')
+  @ApiOperation({ summary: 'Invite a team member by email' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiBody({ type: InviteMemberDto })
+  @ApiResponse({ status: 201, description: 'Invite sent' })
+  @ApiResponse({ status: 400, description: 'Already a member' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async inviteMember(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: InviteMemberDto,
+  ) {
+    return this.companiesService.inviteMember(companyId, user.userId, dto);
+  }
+
+  @Get(':id/invites')
+  @ApiOperation({ summary: 'List company invites' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiResponse({ status: 200, description: 'List of invites' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async listInvites(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.listInvites(companyId, user.userId);
+  }
+
+  @Delete(':id/invites/:inviteId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Revoke a pending company invite' })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiParam({ name: 'inviteId', description: 'Invite ID' })
+  @ApiResponse({ status: 200, description: 'Invite revoked' })
+  @ApiResponse({ status: 404, description: 'Invite not found' })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async revokeInvite(
+    @Param('id') companyId: string,
+    @Param('inviteId') inviteId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.revokeInvite(
+      companyId,
+      user.userId,
+      inviteId,
+    );
+  }
+
+  @Post(':id/reset-api-config')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Danger Zone: reset API configuration',
+    description:
+      'Regenerates TEST and LIVE API keys and disables all webhooks. Previous keys stop working immediately.',
+  })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiResponse({
+    status: 200,
+    description: 'New keys returned once; previous keys are invalid',
+  })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async resetApiConfig(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+  ) {
+    return this.companiesService.resetApiConfig(companyId, user.userId);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({
+    summary: 'Danger Zone: delete company account',
+    description:
+      'Permanently deletes the company and related data. confirmation must match the company name exactly.',
+  })
+  @ApiParam({ name: 'id', description: 'Company ID' })
+  @ApiBody({ type: DeleteCompanyDto })
+  @ApiResponse({ status: 200, description: 'Company deleted' })
+  @ApiResponse({
+    status: 400,
+    description: 'Confirmation does not match company name',
+  })
+  @ApiResponse({ status: 403, description: 'Access denied' })
+  async deleteCompany(
+    @Param('id') companyId: string,
+    @CurrentUser() user: CurrentUserPayload,
+    @Body() dto: DeleteCompanyDto,
+  ) {
+    return this.companiesService.deleteCompany(companyId, user.userId, dto);
   }
 }

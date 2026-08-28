@@ -20,6 +20,10 @@ import { TotpService } from '../common/services/totp.service';
 import { OtpGeneratorUtil } from '../common/utils/otp-generator.util';
 import { CompanySettingsService } from '../company-settings/company-settings.service';
 import { LoggingService } from '../logging/logging.service';
+import { ConfigService } from '@nestjs/config';
+import * as crypto from 'crypto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @Injectable()
 export class AuthService {
@@ -34,6 +38,7 @@ export class AuthService {
     private totpService: TotpService,
     private companySettingsService: CompanySettingsService,
     private loggingService: LoggingService,
+    private configService: ConfigService,
   ) {}
 
   async validateUser(email: string, password: string): Promise<any> {
@@ -750,5 +755,94 @@ export class AuthService {
     return {
       message: 'Authenticator app disabled successfully',
     };
+  }
+
+  async forgotPassword(dto: ForgotPasswordDto) {
+    const generic = {
+      message:
+        'If an account exists for that email, a password reset link has been sent.',
+    };
+    const user = await this.usersService.findByEmail(dto.email);
+    if (!user || !user.isActive) {
+      return generic;
+    }
+
+    const token = crypto.randomBytes(32).toString('hex');
+    const tokenHash = this.hashToken(token);
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
+
+    await this.userRepository.update(user.id, {
+      passwordResetTokenHash: tokenHash,
+      passwordResetExpiresAt: expiresAt,
+    });
+
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') ||
+      'http://localhost:5173';
+    const resetUrl = `${frontendUrl.replace(/\/$/, '')}/reset-password?token=${token}`;
+
+    await this.emailService.sendPasswordResetEmail(user.email, resetUrl);
+
+    this.loggerIfDev('PASSWORD RESET', user.email, token);
+
+    await this.loggingService.safeCreateLog({
+      companyId: user.currentCompanyId || 'system',
+      environment: user.currentEnvironment || 'test',
+      eventType: 'user.password.reset_requested',
+      message: 'Password reset requested',
+      level: 'info',
+      metadata: { userId: user.id, email: user.email },
+    });
+
+    return generic;
+  }
+
+  async resetPassword(dto: ResetPasswordDto) {
+    const tokenHash = this.hashToken(dto.token);
+    const user = await this.userRepository.findOne({
+      where: { passwordResetTokenHash: tokenHash },
+    });
+
+    if (
+      !user ||
+      !user.passwordResetExpiresAt ||
+      user.passwordResetExpiresAt < new Date()
+    ) {
+      throw new BadRequestException('Invalid or expired reset token');
+    }
+
+    const passwordHash = await bcrypt.hash(dto.password, 12);
+    await this.userRepository.update(user.id, {
+      passwordHash,
+      passwordResetTokenHash: null,
+      passwordResetExpiresAt: null,
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    });
+
+    await this.loggingService.safeCreateLog({
+      companyId: user.currentCompanyId || 'system',
+      environment: user.currentEnvironment || 'test',
+      eventType: 'user.password.reset_completed',
+      message: 'Password reset completed',
+      level: 'info',
+      metadata: { userId: user.id, email: user.email },
+    });
+
+    return { message: 'Password has been reset. You can now log in.' };
+  }
+
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  private loggerIfDev(label: string, email: string, token: string) {
+    if (this.configService.get<string>('NODE_ENV') === 'production') {
+      return;
+    }
+    console.log(`\n========================================`);
+    console.log(`[${label}] Email: ${email}`);
+    console.log(`[${label}] Token: ${token}`);
+    console.log(`========================================\n`);
   }
 }
