@@ -5,9 +5,11 @@ import {
   UseGuards,
   Get,
   Req,
+  Res,
   HttpCode,
   HttpStatus,
   NotFoundException,
+  Logger,
 } from '@nestjs/common';
 import {
   ApiTags,
@@ -18,6 +20,7 @@ import {
 } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import { AuthService } from './auth.service';
 import { UsersService } from '../users/users.service';
 import { CompaniesService } from '../companies/companies.service';
@@ -44,6 +47,8 @@ import {
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
+  private readonly logger = new Logger(AuthController.name);
+
   constructor(
     private authService: AuthService,
     private usersService: UsersService,
@@ -269,20 +274,49 @@ export class AuthController {
   @Public()
   @Get('google/callback')
   @UseGuards(AuthGuard('google'))
-  @ApiOperation({ summary: 'Google OAuth callback (sends OTP to email)' })
-  @ApiResponse({
-    status: 200,
-    description: 'Google login successful, OTP sent to email',
-    schema: {
-      example: {
-        requiresMfa: true,
-        message: 'OTP sent to your email',
-        tempToken: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...',
-      },
-    },
+  @ApiOperation({
+    summary: 'Google OAuth callback (sends OTP, then redirects to the frontend)',
   })
-  async googleAuthRedirect(@Req() req) {
-    return this.authService.googleLogin(req.user);
+  @ApiResponse({
+    status: 302,
+    description:
+      'Redirects to GOOGLE_SUCCESS_REDIRECT_URL / FRONTEND_URL with tempToken for MFA',
+  })
+  async googleAuthRedirect(@Req() req, @Res() res: Response) {
+    const frontendRedirect = this.authService.getGoogleFrontendRedirect();
+
+    try {
+      const payload = await this.authService.googleLogin(req.user);
+
+      if (frontendRedirect) {
+        const url = new URL(frontendRedirect);
+        url.searchParams.set('google', 'ok');
+        url.searchParams.set('requiresMfa', String(!!payload.requiresMfa));
+        url.searchParams.set('tempToken', payload.tempToken);
+        if (payload.message) {
+          url.searchParams.set('message', payload.message);
+        }
+        if (payload.mfaMethods?.length) {
+          url.searchParams.set('mfaMethods', payload.mfaMethods.join(','));
+        }
+        return res.redirect(url.toString());
+      }
+
+      return res.json(payload);
+    } catch (error: any) {
+      const message = error?.message || 'Google sign-in failed';
+      this.logger.error(`Google OAuth callback failed: ${message}`);
+
+      if (frontendRedirect) {
+        const url = new URL(frontendRedirect);
+        url.searchParams.set('google', 'error');
+        url.searchParams.set('message', message);
+        return res.redirect(url.toString());
+      }
+
+      const status = typeof error?.getStatus === 'function' ? error.getStatus() : 500;
+      return res.status(status).json({ google: 'error', message });
+    }
   }
 
   @UseGuards(JwtAuthGuard)

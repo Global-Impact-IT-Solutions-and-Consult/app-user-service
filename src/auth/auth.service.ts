@@ -468,6 +468,16 @@ export class AuthService {
     return response;
   }
 
+  getGoogleFrontendRedirect(): string | undefined {
+    const explicit = this.configService.get<string>('GOOGLE_SUCCESS_REDIRECT_URL');
+    if (explicit) {
+      return explicit;
+    }
+    const frontendUrl =
+      this.configService.get<string>('FRONTEND_URL') || 'http://localhost:5173';
+    return `${frontendUrl.replace(/\/$/, '')}/auth/google`;
+  }
+
   async switchEnvironment(userId: string, switchDto: SwitchEnvironmentDto) {
     const user = await this.userRepository.findOne({
       where: { id: userId },
